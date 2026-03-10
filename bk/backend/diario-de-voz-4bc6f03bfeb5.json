@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "diario-de-voz",
+  "private_key_id": "4bc6f03bfeb5de04c570ecc8005a34d7f6f80120",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDKHDvqg+2DiAiQ\n4YLJk1aOS8FBviKrIxxPV3GZ954kcw0npRP37tHiKa5GUGUco2HYOdnobDSszw6L\nI8pRb4y/NRshDqsHnNmdbvLICXpoDH54grNzF34nbfJy6SLV2TH97HqqA6G3W75a\n1Ji30MJZmRFwKlOfVFFSrc80UnXO6oY8oTJ6UjzG/FRT/WDoVA3BHMj3mOu15/a4\nFvx3Z8xvuLM5ESKqf8BXNVh29COJzil4asPdf8NKKt7QVYejrDzd1qzIZhfuB7HJ\nhWgRTx1FCoKe5At4xHOPTAHmQShE3CDXmm5i2o/e10FVTP/aMQsNdM1kmY1CTsvj\n4F6p4DEHAgMBAAECggEATkadFfi+dmCrIKGWa8d6kGXalUG0X5+biUcOolj6kJdW\nkvImR7Hg67zE2EquvmawsHPHZ3Lw+7S9pznXU67mTe+dcDIkHzCqP4UG1l6FX+Lm\n4HmOUpbYryCv871DVptl9zgtUcdSTJdlo/wOobJicx0LWeuqs1yOmnzicRs2sUoG\ntPksid697j3tvPB+miGe0Yd8EgWOHG8CChePYYg5O15S3AccurpZxxlvlQjZ1vnI\n8/t/h7vUIySh9zS0/FplXQyuA72na2LwL2Xg0Hl17czXPLPzBokUjOP41BYi2igL\nuPV3fIFSH59KEOzsiC2V7o435YrgmgHVlRGTjfC5oQKBgQD14n+lwiAqLhe91z31\nUYs+p8XIwinOsbH/jGnh0WOfAuy4LvGRLdtTK4qAvOaOOLaHF/MTdbldgx0a25yI\nHjXEZoTWVpvlphgNbIErhbEGeRRq3k9FjKi2PPU7xufM0V31Z7NxKTsbefiWVM+0\nSLzHFDJspqE+e+d58p2eiqkMSQKBgQDSbLsKqVs+yJ7qK9YePn2EsaI5tAkvHFMw\njFfnYYmBUtHt0tAF+wHwDPQj2a2TtGwDd0b6qlkrMFzjXXKd62rLQbPhxtuITZnL\nmBQws3Q6ghrLge+RrCmq0wy/D86bNg+Mg4R3OWm7G1RVRQsWi68QrOhYwadRC6Ye\ndHdppoEyzwKBgGuow4k5SUoOqniFwOwjyxsg7Hmtgg6tQSmKOmYUf1EFP86ZR03w\nzSJKYzdg/nXxIQJfmx+/IO1v1hOHaq8ywwn+dVU/0Lypj8h45MnAnLUf2K++LOlf\n4BMC98E3oxDL7x7fS/NVQTsTmaOA+PyQCJAGKNnnz5wDNmPvtdHQFpp5AoGBAJgF\nS5/pOG2EXSLKprdU6DOcbZoIknYBnaw+SCd2lPPkVJvfqMAZVo4JnbvkwH0sZLig\nTJw9w4vrNcBhO7QRZycPAZkEpIe1oH2xEi0ZCMhYRGlwJxbz7WpnbRb/oYEKrnMS\ndPn5dYRiuyubZOZV5hVDBd1RksJ/ivUHqVmfnEmLAoGBAPD8sh+35kHlUfLYhQoG\n16VJD17N493ODc41S7S2D1uKxVLCWWI0HSsix2w9u0rrD1sSjTplDRr4ZTBgxlh2\n8N/kjqGi1HBHG3RKz9MDKVbOYtA4Yv3rp5k3gVgmWfDmLGMltJY0OKNZxEtbgEBs\n+UuB5Co9qkKgHqfE76NLR5oQ\n-----END PRIVATE KEY-----\n",
+  "client_email": "diario-de-voz@diario-de-voz.iam.gserviceaccount.com",
+  "client_id": "106452184500916460936",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/diario-de-voz%40diario-de-voz.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
