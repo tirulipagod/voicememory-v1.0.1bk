@@ -771,10 +771,17 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
     // Absolute pure math mapping index without gaps
     const index = Math.round(x / ITEM_WIDTH);
 
-    if (infiniteData[index] && infiniteData[index].label !== selected?.label) {
+    if (infiniteData[index] && infiniteData[index].label !== selectedRef.current?.label) {
       currentInfiniteIndex.current = index;
       setSelected(infiniteData[index]);
     }
+
+    // Force strict exact pixel lock via hardware interpolation in case swipe fell short
+    carouselRef.current?.scrollToIndex({
+      index: currentInfiniteIndex.current,
+      animated: true,
+      viewPosition: 0.5
+    });
   };
 
   let offset = 0;
@@ -995,7 +1002,7 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
             showsHorizontalScrollIndicator={false}
             pagingEnabled={true}
             snapToInterval={ITEM_WIDTH}
-            snapToAlignment="center"
+            snapToAlignment="start"
             decelerationRate="fast"
             onMomentumScrollEnd={onMomentumScrollEnd}
             scrollEventThrottle={16}
