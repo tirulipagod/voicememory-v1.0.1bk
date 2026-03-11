@@ -465,6 +465,10 @@ interface DonutChartProps {
 
 const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPressArc }) => {
   const [selected, setSelected] = useState(data[0]);
+  const selectedRef = useRef(selected);
+  useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
   const carouselRef = useRef<FlatList>(null);
   const orbitAnim = useRef(new Animated.Value(0)).current;
   const counterOrbitAnim = useRef(new Animated.Value(0)).current;
@@ -723,7 +727,7 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
           isDragging.current = false;
         });
 
-        if (selected?.label !== newSelected.label) {
+        if (selectedRef.current?.label !== newSelected.label) {
           setSelected(newSelected);
 
           let indexDiff = currentIndex - (currentInfiniteIndex.current % data.length);
@@ -989,6 +993,7 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
             data={infiniteData}
             horizontal
             showsHorizontalScrollIndicator={false}
+            pagingEnabled={true}
             snapToInterval={ITEM_WIDTH}
             snapToAlignment="center"
             decelerationRate="fast"
