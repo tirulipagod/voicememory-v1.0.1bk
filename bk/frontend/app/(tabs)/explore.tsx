@@ -477,7 +477,7 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
   // High Precision Layout
   const CONTAINER_WIDTH = width - 40;
   const ARROW_BUTTON_WIDTH = 40;
-  const VIEWPORT_WIDTH = CONTAINER_WIDTH - (ARROW_BUTTON_WIDTH * 2) - 10;
+  const VIEWPORT_WIDTH = Math.floor(CONTAINER_WIDTH - (ARROW_BUTTON_WIDTH * 2) - 10);
   const ITEM_WIDTH = VIEWPORT_WIDTH;
 
   useEffect(() => {
@@ -511,6 +511,9 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
   const infiniteData = React.useMemo(() => {
     return Array(REPEAT_COUNT).fill(data).flat();
   }, [data]);
+  const snapOffsets = React.useMemo(() => {
+    return infiniteData.map((_, i) => Math.floor(i * ITEM_WIDTH));
+  }, [infiniteData, ITEM_WIDTH]);
   const middleIndex = Math.floor(REPEAT_COUNT / 2) * (data?.length || 1);
   const currentInfiniteIndex = useRef(middleIndex);
 
@@ -992,9 +995,9 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
             data={infiniteData}
             horizontal
             showsHorizontalScrollIndicator={false}
-            pagingEnabled={true}
-            snapToInterval={ITEM_WIDTH}
-            snapToAlignment="center"
+            snapToOffsets={snapOffsets}
+            disableIntervalMomentum={true}
+            snapToAlignment="start"
             decelerationRate="fast"
             onMomentumScrollEnd={onMomentumScrollEnd}
             scrollEventThrottle={16}
