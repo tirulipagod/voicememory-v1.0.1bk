@@ -473,7 +473,18 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
   const orbitAnim = useRef(new Animated.Value(0)).current;
   const counterOrbitAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(1)).current;
+  const pulseAnim = useRef(new Animated.Value(1)).current;
   const lastPressTime = useRef(0);
+
+  useEffect(() => {
+    // Persistent slow pulse for active segment
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.1, duration: 1500, useNativeDriver: true, easing: Easing.inOut(Easing.sin) }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 1500, useNativeDriver: true, easing: Easing.inOut(Easing.sin) }),
+      ])
+    ).start();
+  }, []);
 
   // High Precision Layout
   const CONTAINER_WIDTH = width - 40;
@@ -503,8 +514,8 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
   }, []);
 
   const drawSize = size + 120;
-  const strokeWidth = 36;
-  const radius = (size - strokeWidth) / 2;
+  const strokeWidth = 42;
+  const radius = (size - 30) / 2;
   const center = drawSize / 2;
   const circumference = 2 * Math.PI * radius;
 
@@ -566,16 +577,16 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
         if (A <= 0) {
           const wrappedA = 360 + A;
           inputRange = [0, B, B + 0.001, wrappedA - 0.001, wrappedA, 360];
-          opacityOutputRange = [1, 1, 0.35, 0.35, 1, 1];
+          opacityOutputRange = [1, 1, 0.55, 0.55, 1, 1];
           activeOutputRange = [1, 1, 0, 0, 1, 1];
         } else if (B >= 360) {
           const wrappedB = B - 360;
           inputRange = [0, wrappedB, wrappedB + 0.001, A - 0.001, A, 360];
-          opacityOutputRange = [1, 1, 0.35, 0.35, 1, 1];
+          opacityOutputRange = [1, 1, 0.55, 0.55, 1, 1];
           activeOutputRange = [1, 1, 0, 0, 1, 1];
         } else {
           inputRange = [0, A - 0.001, A, B, B + 0.001, 360];
-          opacityOutputRange = [0.35, 0.35, 1, 1, 0.35, 0.35];
+          opacityOutputRange = [0.55, 0.55, 1, 1, 0.55, 0.55];
           activeOutputRange = [0, 0, 1, 1, 0, 0];
         }
 
@@ -864,18 +875,21 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
                     key={index}
                     onPress={() => handleSegmentPress(item, index)}
                   >
-                    {/* Shadow/Glow via Native Interpolation */}
-                    <AnimatedG opacity={animatedActive}>
+                    {/* Shadow/Glow via Native Interpolation (Pulsing) */}
+                    <AnimatedG
+                      opacity={animatedActive}
+                      style={{ transform: [{ scale: pulseAnim }] }}
+                    >
                       <Circle
                         cx={center}
                         cy={center}
                         r={radius}
                         stroke={item.color}
-                        strokeWidth={strokeWidth + 12}
+                        strokeWidth={strokeWidth + 24}
                         strokeDasharray={strokeDasharray}
                         strokeDashoffset={currentOffset}
                         fill="none"
-                        opacity={0.3}
+                        opacity={0.4}
                         onPress={() => handleSegmentPress(item, index)}
                       />
                     </AnimatedG>
@@ -923,7 +937,7 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
               <Circle
                 cx={drawSize / 2}
                 cy={drawSize / 2}
-                r={radius + 34}
+                r={radius + 36}
                 stroke="#a78bfa"
                 strokeWidth={2}
                 strokeDasharray="20 180"
@@ -933,7 +947,7 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
               <Circle
                 cx={drawSize / 2}
                 cy={drawSize / 2}
-                r={radius + 34}
+                r={radius + 36}
                 stroke="#ffffff"
                 strokeWidth={1}
                 strokeDasharray="2 18"
@@ -953,7 +967,7 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
               <Circle
                 cx={drawSize / 2}
                 cy={drawSize / 2}
-                r={radius - 28}
+                r={radius - 24}
                 stroke="#ffffff"
                 strokeWidth={1}
                 strokeDasharray="40 160"
@@ -964,7 +978,7 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
               <Circle
                 cx={drawSize / 2}
                 cy={drawSize / 2}
-                r={radius - 28}
+                r={radius - 24}
                 stroke="#ffffff"
                 strokeWidth={3}
                 strokeDasharray="2 198"
