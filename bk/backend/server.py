@@ -116,8 +116,8 @@ class MemoryCreate(BaseModel):
     transcription: Optional[str] = None
 
 class MemoryUpdate(BaseModel):
-    transcription: Optional[str] = None
     memory_date: Optional[str] = None
+    deleted: Optional[bool] = None
 
 class EmotionDetail(BaseModel):
     emotion: str
@@ -138,6 +138,7 @@ class MemoryResponse(BaseModel):
     segments: Optional[List[TimestampedSegment]] = None
     emotions: Optional[List[EmotionDetail]] = None
     summary: Optional[str] = None
+    deleted: bool = False
     created_at: datetime
     updated_at: Optional[datetime] = None
 
@@ -235,15 +236,33 @@ class MemoryContext(BaseModel):
     memoryDate: Optional[str] = None
     summary: Optional[str] = None
 
+class UserContext(BaseModel):
+    name: Optional[str] = None
+    birth_date: Optional[str] = None
+    goal: Optional[str] = None
+
 class ChatMessage(BaseModel):
     message: str
     persona: str = "therapeutic"
     memories: List[MemoryContext] = []  # Frontend sends memories for offline-first approach
+    user_context: Optional[UserContext] = None
 
 class ChatResponse(BaseModel):
     response: str
     persona_used: str
     memories_analyzed: int
+
+class ChallengeValidationRequest(BaseModel):
+    audio_base64: str
+    challenge_text: str
+
+class ChallengeValidationResponse(BaseModel):
+    success: bool
+    message: str
+    feedback: str
+    transcription: str
+    reward_xp: int = 50
+    memory_data: Optional[Dict[str, Any]] = None
 
 # ==================== HELPERS ====================
 
@@ -338,6 +357,16 @@ LISTENING_PERSONAS = {
         "emoji": "📚",
         "description": "Não analisa, apenas organiza fatos. Ideal para biografias e memórias.",
         "prompt_focus": "Organize esta fala como um documentário de vida. Não analise ou julgue - apenas capture os fatos, pessoas, lugares e momentos importantes. Estruture como se fosse para uma biografia ou memórias para os filhos."
+    },
+    "analytical": {
+        "id": "analytical",
+        "name": "Analítico",
+        "subtitle": "Focado em Dados",
+        "icon": "stats-chart",
+        "color": "#0ea5e9",
+        "emoji": "📊",
+        "description": "Baseia suas respostas em dados de humor e frequência de emoções detectadas.",
+        "prompt_focus": "Analise esta fala cruzando com os dados estatísticos das memórias (moodScore, frequências de emoções). Identifique tendências emocionais ao longo do tempo e ofereça um feedback baseado em evidências."
     }
 }
 
@@ -800,6 +829,7 @@ async def create_memory(memory_data: MemoryCreate, current_user: dict = Depends(
         "segments": segments,
         "emotions": emotion_data.get("emotions", []),
         "summary": emotion_data.get("summary", ""),
+        "deleted": False,
         "created_at": now, 
         "updated_at": now
     }
@@ -807,8 +837,10 @@ async def create_memory(memory_data: MemoryCreate, current_user: dict = Depends(
     return MemoryResponse(**memory)
 
 @api_router.get("/memories", response_model=MemoryListResponse)
-async def get_memories(skip: int = 0, limit: int = 50, sort_by: str = Query("created_at", regex="^(created_at|updated_at|memory_date)$"), sort_order: str = Query("desc", regex="^(asc|desc)$"), emotion: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+async def get_memories(skip: int = 0, limit: int = 50, sort_by: str = Query("created_at", regex="^(created_at|updated_at|memory_date)$"), sort_order: str = Query("desc", regex="^(asc|desc)$"), emotion: Optional[str] = None, include_deleted: bool = False, current_user: dict = Depends(get_current_user)):
     query = {"user_id": current_user["id"]}
+    if not include_deleted:
+        query["deleted"] = {"$ne": True}
     if emotion:
         query["emotion"] = emotion
     sort_direction = -1 if sort_order == "desc" else 1
@@ -850,6 +882,8 @@ async def update_memory(memory_id: str, update_data: MemoryUpdate, current_user:
         updates["segments"] = create_segments_from_transcription(updates["transcription"], memory.get("duration_seconds", 0))
     if update_data.memory_date is not None:
         updates["memory_date"] = update_data.memory_date
+    if update_data.deleted is not None:
+        updates["deleted"] = update_data.deleted
     await db.memories.update_one({"id": memory_id}, {"$set": updates})
     updated_memory = await db.memories.find_one({"id": memory_id})
     updated_memory.setdefault("segments", [])
@@ -1537,7 +1571,7 @@ async def admin_login(credentials: AdminLogin):
 
 # ==================== CHAT RAG (COPILOT) ====================
 
-async def generate_chat_response(message: str, persona: str, memories: List[MemoryContext]) -> str:
+async def generate_chat_response(message: str, persona: str, memories: List[MemoryContext], user_context: Optional[UserContext] = None) -> str:
     """Generate a chat response using Gemini with memory context (RAG)"""
     try:
         if not gemini_client:
@@ -1555,34 +1589,49 @@ async def generate_chat_response(message: str, persona: str, memories: List[Memo
         for mem in sorted(memories, key=lambda x: x.createdAt, reverse=True)[:30]:  # Last 30 memories
             date_str = mem.createdAt.split('T')[0] if 'T' in mem.createdAt else mem.createdAt
             memory_context_lines.append(
-                f"[{date_str}] Emoção: {mem.emotion} {mem.emotionEmoji} (Humor: {mem.moodScore}/10) - {mem.transcription[:200]}{'...' if len(mem.transcription) > 200 else ''}"
+                f"ID: {mem.id} | [{date_str}] Emoção: {mem.emotion} {mem.emotionEmoji} (Humor: {mem.moodScore}/10) - {mem.transcription[:200]}{'...' if len(mem.transcription) > 200 else ''}"
             )
         
         memory_context = "\n".join(memory_context_lines)
         
-        # Build the prompt
-        prompt = f"""Você é um assistente de diário pessoal operando como a persona "{persona_data['name']}" ({persona_data['subtitle']}).
+        # Build user profile context
+        user_profile_bio = ""
+        if user_context:
+            parts = []
+            if user_context.name: parts.append(f"Nome do usuário: {user_context.name}")
+            if user_context.birth_date: parts.append(f"Data de nascimento: {user_context.birth_date}")
+            if user_context.goal: parts.append(f"Propósito no app: {user_context.goal}")
+            if parts:
+                user_profile_bio = "DADOS DO PERFIL DO USUÁRIO:\n" + "\n".join(parts) + "\n\n"
 
-DESCRIÇÃO DA PERSONA: {persona_data['description']}
-FOCO DA ANÁLISE: {persona_data['prompt_focus']}
+        # Custom persona adjustments for more human feel
+        persona_behavior = {
+            "therapeutic": "Você é um terapeuta empático e gentil. Use uma linguagem acolhedora, valide os sentimentos e faça perguntas reflexivas leves. Evite clichês de autoajuda vazios.",
+            "analytical": "Você é um analista de padrões comportamentais. Foque em observar tendências nas memórias, correlações entre eventos e sentimentos, de forma objetiva mas empática.",
+            "stoic": "Você é um mentor estoico. Foca no que está sob nosso controle, na resiliência e na sabedoria prática para lidar com as adversidades com serenidade.",
+            "friend": "Você é um melhor amigo de longa data. Use linguagem informal (brasileira), seja companheiro, ouça sem julgar e dê apoio emocional como alguém que realmente se importa."
+        }.get(persona, "Você é um assistente pessoal focado em bem-estar emocional.")
 
-O usuário está conversando com você e disse: "{message}"
+        prompt = f"""Você é o 'Eu Digital' do usuário, atuando como a persona: {persona_behavior}
+        
+INFORMAÇÕES DO USUÁRIO:
+Nome: {user_context.name if user_context else 'Usuário'}
+Objetivo: {user_context.goal if user_context else 'Autoconhecimento'}
 
-CONTEXTO DAS MEMÓRIAS RECENTES DO USUÁRIO (do mais recente para o mais antigo):
+Abaixo estão as memórias recentes do usuário (contexto):
 {memory_context}
 
-INSTRUÇÕES IMPORTANTES E CRÍTICAS:
-1. Responda de forma empática, calorosa e útil, usando o subtom de sua persona.
-2. Base sua resposta EXCLUSIVAMENTE nas memórias fornecidas acima.
-3. NÃO TIRE CONCLUSÕES PRECIPITADAS E NUNCA INVENTE FATOS. Se o usuário diz que *pensou* em fazer algo, não assuma que ele *fez*. Aja apenas sobre eventos que o usuário declarou explicitly como finalizados.
-4. Se a pergunta for sobre algo que não está nas memórias, diga gentilmente que não encontrou registros ou que precisa de mais detalhes passados por ele.
-5. Use suporte de Markdown para formatar tabelas úteis, litas com bullet points se fizer sentido e negritos para partes da sua resposta que merecem destaque do usuário.
-6. CITAÇÕES (IMPORTANTE): Ao utilizar um fato presente nas memórias contextualizadas do usuário para compôr a resposta, por favor, conclua o parágrafo citando o ID da memória entre chaves duplas, para o app capturar o link, ex: (fato descrito) {{{{ID_DA_MEMORIA}}}}.
-7. Seja conciso mas profundo - máximo de 4 parágrafos.
-8. NEUTRALIDADE RELIGIOSA: DEVE ser estritamente laico. JAMAIS mencione Deus, orações, carma ou religião. Foque em psicologia e resiliência secular.
-9. NOTAS SENSÍVEIS E DE RISCO: Se (e APENAS SE) você notar intenção clara de crime, abuso físico/doméstico ou risco IMINENTE de vida/suicídio, DEVE iniciar sua resposta com a tag exata "[ALERTA_SENSIVEL]". Nesse caso específico, abandone o tom acolhedor e dê um aviso direto e legal de ajuda (ex: ligue 188). JAMAIS use essa tag para luto comum, tristeza, depressão ou dores emocionais do dia a dia.
+O usuário disse agora: "{message}"
 
-Sua resposta:"""
+DIRETRIZES TÉCNICAS E DE ESTILO:
+1. FALE COMO HUMANO: Evite "Como uma IA", "Aqui está minha análise" ou "Segundo meus dados". Responda direto: "Lembro que você...", "Sinto que...", "Isso conecta com...".
+2. SEJA UM COMPANHEIRO, NÃO UM GURU: Não tente prever o futuro nem agir como vidente. Apenas ouça, valide e conecte com o histórico do usuário.
+3. NEUTRALIDADE RELIGIOSA: DEVE ser estritamente laico. JAMAIS mencione Deus, forças superiores ou religião.
+4. SEGURANÇA (CRÍTICO): Se houver intenção de crime ou risco IMINENTE de vida/suicídio, DEVE iniciar com "[ALERTA_SENSIVEL]" e ser direto sobre ajuda profissional.
+5. Se o usuário falar sobre algo insano ou perigoso (mesmo que não iminente), seja acolhedor mas firme em alertar sobre o risco à segurança dele.
+6. CITAÇÕES: Quando citar uma memória, finalize o parágrafo com {{{{ID_DA_MEMORIA}}}}.
+7. Conciso: No máximo 4 parágrafos.
+"""
 
         response = gemini_client.models.generate_content(
             model="gemini-2.0-flash",
@@ -1594,6 +1643,98 @@ Sua resposta:"""
     except Exception as e:
         logger.error(f"Chat generation error: {e}")
         return "Desculpe, ocorreu um erro ao processar sua mensagem. Por favor, tente novamente."
+
+@api_router.post("/transcribe", response_model=TranscribeResponse)
+async def transcribe_only(request: TranscribeRequest):
+    """Transcription endpoint for chat/temp inputs"""
+    if not request.audio_base64:
+        raise HTTPException(status_code=400, detail="Audio base64 is required")
+    
+    transcription, segments = await transcribe_audio_gemini(request.audio_base64, request.duration_seconds)
+    
+    return TranscribeResponse(
+        transcription=transcription,
+        segments=segments
+    )
+
+@api_router.post("/validate_challenge", response_model=ChallengeValidationResponse)
+async def validate_challenge(request: ChallengeValidationRequest):
+    """
+    Validates if the user's audio matches the daily challenge intent.
+    Uses AI to analyze the content and provide feedback.
+    """
+    if not request.audio_base64:
+        raise HTTPException(status_code=400, detail="Audio base64 is required")
+    
+    # 1. Transcribe the audio
+    transcription, _ = await transcribe_audio_gemini(request.audio_base64)
+    
+    if not transcription or len(transcription.strip()) < 5:
+        return ChallengeValidationResponse(
+            success=False,
+            message="Áudio muito curto ou incompreensível.",
+            feedback="Poxa, não consegui entender bem o que você disse. Tente falar um pouco mais devagar ou aproximar o celular.",
+            transcription=transcription or ""
+        )
+    
+    # 2. Use AI to validate intent
+    prompt = f"""Você é um validador de desafios diários do app Diário de Voz.
+    O usuário recebeu o seguinte desafio: "{request.challenge_text}"
+    O usuário gravou a seguinte mensagem: "{transcription}"
+    
+    Analise se o que o usuário disse realmente responde ao desafio proposto.
+    
+    Regras de Validação:
+    - Se o usuário apenas falou "teste", "blá blá blá" ou fugiu completamente de responder a pergunta do desafio, SUCCESS = False.
+    - Se o usuário respondeu de forma honesta (mesmo que curta) ao desafio, SUCCESS = True.
+    - Seja generoso. Se houver esforço em responder, valide.
+    
+    FEEDBACK:
+    - Se for sucesso: Dê um parabéns curto e uma frase motivadora relacionada ao que ele falou.
+    - Se falha: Explique gentilmente que a resposta não pareceu relacionada ao desafio e peça para tentar novamente sendo mais específico.
+    
+    Responda APENAS em JSON no formato:
+    {{
+        "success": boolean,
+        "feedback": "string curta e humana",
+        "emotion": "string (ex: Feliz, Reflexivo...)",
+        "emoji": "string (emoji correspondente)",
+        "score": number (1-10 de felicidade)
+    }}
+    """
+    
+    try:
+        response = gemini_client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=[prompt],
+            config={
+                'response_mime_type': 'application/json',
+            }
+        )
+        
+        import json
+        result = json.loads(response.text)
+        
+        return ChallengeValidationResponse(
+            success=result.get("success", False),
+            message="Validação concluída",
+            feedback=result.get("feedback", "Obrigado por compartilhar!"),
+            transcription=transcription,
+            memory_data={
+                "emotion": result.get("emotion", "Reflexivo"),
+                "emoji": result.get("emoji", "🤔"),
+                "score": result.get("score", 5)
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Challenge validation error: {e}")
+        return ChallengeValidationResponse(
+            success=True, # Fallback to success on error to not block user
+            message="Erro na validação IA, mas registramos seu esforço!",
+            feedback="Obrigado por cumprir o desafio de hoje!",
+            transcription=transcription
+        )
 
 @api_router.post("/chat/memories", response_model=ChatResponse)
 async def chat_with_memories(chat_data: ChatMessage):
@@ -1609,7 +1750,8 @@ async def chat_with_memories(chat_data: ChatMessage):
     response_text = await generate_chat_response(
         message=chat_data.message,
         persona=chat_data.persona,
-        memories=chat_data.memories
+        memories=chat_data.memories,
+        user_context=chat_data.user_context
     )
     
     return ChatResponse(

@@ -8,9 +8,12 @@ import {
   ActivityIndicator,
   RefreshControl,
   Animated,
+  Easing,
   Dimensions,
   Pressable,
   Modal,
+  PanResponder,
+  FlatList,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -19,6 +22,8 @@ import { localStorage, LocalMemory } from '../../src/services/LocalStorage';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback } from 'react';
 import Svg, { Polygon, Line, Circle, Text as SvgText, G, Rect } from 'react-native-svg';
+
+const AnimatedG = Animated.createAnimatedComponent(G);
 
 const { width } = Dimensions.get('window');
 
@@ -458,78 +463,591 @@ interface DonutChartProps {
   onPressArc: (emotion: string) => void;
 }
 
-const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 280, onPressArc }) => {
-  if (!data || data.length === 0) return null;
+const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPressArc }) => {
+  const [selected, setSelected] = useState(data[0]);
+  const carouselRef = useRef<FlatList>(null);
+  const orbitAnim = useRef(new Animated.Value(0)).current;
+  const counterOrbitAnim = useRef(new Animated.Value(0)).current;
+  const scaleAnim = useRef(new Animated.Value(1)).current;
 
-  const center = size / 2;
-  const strokeWidth = 40;
+  // High Precision Layout
+  const CONTAINER_WIDTH = width - 40;
+  const ARROW_BUTTON_WIDTH = 40;
+  const VIEWPORT_WIDTH = CONTAINER_WIDTH - (ARROW_BUTTON_WIDTH * 2) - 10;
+  const ITEM_WIDTH = VIEWPORT_WIDTH;
+
+  useEffect(() => {
+    // Parallel Orbits - Slower and more elegant
+    Animated.loop(
+      Animated.timing(orbitAnim, {
+        toValue: 1,
+        duration: 15000,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    ).start();
+
+    Animated.loop(
+      Animated.timing(counterOrbitAnim, {
+        toValue: 1,
+        duration: 20000,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    ).start();
+  }, []);
+
+  const drawSize = size + 120;
+  const strokeWidth = 36;
   const radius = (size - strokeWidth) / 2;
+  const center = drawSize / 2;
   const circumference = 2 * Math.PI * radius;
 
-  // Emoção dominante
-  const dominant = data[0];
+  const REPEAT_COUNT = 50;
+  const infiniteData = React.useMemo(() => {
+    return Array(REPEAT_COUNT).fill(data).flat();
+  }, [data]);
+  const middleIndex = Math.floor(REPEAT_COUNT / 2) * (data?.length || 1);
+  const currentInfiniteIndex = useRef(middleIndex);
 
-  let offset = 0; // Cumulative offset
+  useEffect(() => {
+    if (data && data.length > 0) {
+      let idx = data.findIndex(d => d.label === selected?.label);
+      if (idx === -1) {
+        idx = 0;
+        setSelected(data[0]);
+      }
+      currentInfiniteIndex.current = middleIndex + idx;
+      setTimeout(() => {
+        carouselRef.current?.scrollToIndex({
+          index: currentInfiniteIndex.current,
+          animated: false,
+          viewPosition: 0.5
+        });
+      }, 100);
+    }
+  }, [data]);
+
+  useEffect(() => {
+    Animated.sequence([
+      Animated.timing(scaleAnim, { toValue: 1.1, duration: 150, useNativeDriver: true }),
+      Animated.timing(scaleAnim, { toValue: 1.05, duration: 100, useNativeDriver: true }),
+    ]).start();
+  }, [selected]);
+
+  // Compute angles for each item to allow spinning (with UI thread interpolation ranges)
+  const donutData = React.useMemo(() => {
+    let currentAngle = 0;
+    return data.map((item) => {
+      const sweep = (item.percentage / 100) * 360;
+      const centerAngle = currentAngle + sweep / 2;
+      currentAngle += sweep;
+
+      let inputRange: number[] = [];
+      let opacityOutputRange: number[] = [];
+      let activeOutputRange: number[] = [];
+
+      if (data.length === 1) {
+        inputRange = [0, 360];
+        opacityOutputRange = [1, 1];
+        activeOutputRange = [1, 1];
+      } else {
+        const A = centerAngle - sweep / 2;
+        const B = centerAngle + sweep / 2;
+
+        if (A <= 0) {
+          const wrappedA = 360 + A;
+          inputRange = [0, B, B + 0.001, wrappedA - 0.001, wrappedA, 360];
+          opacityOutputRange = [1, 1, 0.35, 0.35, 1, 1];
+          activeOutputRange = [1, 1, 0, 0, 1, 1];
+        } else if (B >= 360) {
+          const wrappedB = B - 360;
+          inputRange = [0, wrappedB, wrappedB + 0.001, A - 0.001, A, 360];
+          opacityOutputRange = [1, 1, 0.35, 0.35, 1, 1];
+          activeOutputRange = [1, 1, 0, 0, 1, 1];
+        } else {
+          inputRange = [0, A - 0.001, A, B, B + 0.001, 360];
+          opacityOutputRange = [0.35, 0.35, 1, 1, 0.35, 0.35];
+          activeOutputRange = [0, 0, 1, 1, 0, 0];
+        }
+
+        // Strictly increasing order enforcement
+        let cleanInput: number[] = [];
+        let cleanOpacity: number[] = [];
+        let cleanActive: number[] = [];
+        for (let i = 0; i < inputRange.length; i++) {
+          if (cleanInput.length > 0 && inputRange[i] <= cleanInput[cleanInput.length - 1]) {
+            cleanInput.push(cleanInput[cleanInput.length - 1] + 0.000001);
+          } else {
+            cleanInput.push(inputRange[i]);
+          }
+          cleanOpacity.push(opacityOutputRange[i]);
+          cleanActive.push(activeOutputRange[i]);
+        }
+
+        inputRange = cleanInput;
+        opacityOutputRange = cleanOpacity;
+        activeOutputRange = cleanActive;
+      }
+
+      return { ...item, centerAngle, inputRange, opacityOutputRange, activeOutputRange };
+    });
+  }, [data]);
+
+  const wheelAnim = useRef(new Animated.Value(0)).current;
+
+  // React Native Continuous Modulus Engine
+  const normalizedWheel = React.useMemo(() => {
+    const invertWheel = Animated.multiply(wheelAnim, -1);
+    const mod1 = Animated.modulo(invertWheel, 360);
+    const add360 = Animated.add(mod1, 360);
+    return Animated.modulo(add360, 360);
+  }, [wheelAnim]);
+
+  const currentRot = useRef(0);
+  const donutRef = useRef<View>(null);
+  const centerCoord = useRef({ x: 0, y: 0 });
+  const startAngle = useRef<number | null>(null);
+  const isDragging = useRef(false);
+
+  useEffect(() => {
+    const id = wheelAnim.addListener(({ value }) => {
+      currentRot.current = value;
+    });
+    return () => wheelAnim.removeListener(id);
+  }, [wheelAnim]);
+
+  useEffect(() => {
+    if (!donutData || donutData.length === 0 || isDragging.current) return;
+    const selectedItem = donutData.find(d => d.label === selected?.label) || donutData[0];
+    const targetAngle = -selectedItem.centerAngle;
+
+    wheelAnim.flattenOffset();
+    const current = currentRot.current;
+    let diff = targetAngle - (current % 360);
+
+    // Nearest path rotation to the target
+    if (diff > 180) diff -= 360;
+    if (diff < -180) diff += 360;
+
+    Animated.timing(wheelAnim, {
+      toValue: current + diff,
+      duration: 500,
+      useNativeDriver: true,
+      easing: Easing.out(Easing.cubic)
+    }).start();
+  }, [selected, donutData]);
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: (e) => {
+        const { locationX, locationY } = e.nativeEvent;
+        const dist = Math.sqrt(Math.pow(locationX - drawSize / 2, 2) + Math.pow(locationY - drawSize / 2, 2));
+        if (dist < radius - 30) return false;
+        return true;
+      },
+      onStartShouldSetPanResponderCapture: (e) => {
+        const { locationX, locationY } = e.nativeEvent;
+        const dist = Math.sqrt(Math.pow(locationX - drawSize / 2, 2) + Math.pow(locationY - drawSize / 2, 2));
+        if (dist < radius - 30) return false;
+        return true;
+      },
+      onMoveShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponderCapture: () => true,
+      onPanResponderGrant: (e) => {
+        isDragging.current = true;
+        wheelAnim.stopAnimation();
+        wheelAnim.extractOffset();
+        donutRef.current?.measure((x, y, w, h, px, py) => {
+          if (w > 0 && h > 0) {
+            centerCoord.current = { x: px + w / 2, y: py + h / 2 };
+            startAngle.current = Math.atan2(e.nativeEvent.pageY - centerCoord.current.y, e.nativeEvent.pageX - centerCoord.current.x) * (180 / Math.PI);
+          }
+        });
+      },
+      onPanResponderMove: (e) => {
+        if (centerCoord.current.x !== 0 && centerCoord.current.y !== 0 && startAngle.current !== null) {
+          const { pageX, pageY } = e.nativeEvent;
+          const currentAngle = Math.atan2(pageY - centerCoord.current.y, pageX - centerCoord.current.x) * (180 / Math.PI);
+
+          let diff = currentAngle - startAngle.current;
+          if (diff > 180) diff -= 360;
+          if (diff < -180) diff += 360;
+
+          // Make the movement feel more cohesive and fluid (1:1 tracking)
+          const newRot = (wheelAnim as any)._value + diff;
+          wheelAnim.setValue(newRot);
+          startAngle.current = currentAngle;
+
+          // Internal logic only: We let JS know what segment is on top, but no setState here.
+          // Visual cascata is 100% UI thread interpolation on wheelAnim internally.
+        }
+      },
+      onPanResponderRelease: () => {
+        wheelAnim.flattenOffset();
+        const rot = currentRot.current;
+
+        // CORRECTION 1: Smooth 0-360 normalization for JS state mapping, reversed for correct direction
+        let normalizedRot = (-rot) % 360;
+        if (normalizedRot < 0) normalizedRot += 360;
+
+        // Determine standard block placement for snappiness robustly via minimum distance
+        let currentIndex = 0;
+        let minDiff = Infinity;
+        for (let i = 0; i < donutData.length; i++) {
+          const item = donutData[i];
+          let diff = Math.abs(item.centerAngle - normalizedRot);
+          if (diff > 180) diff = 360 - diff;
+          if (diff < minDiff) {
+            minDiff = diff;
+            currentIndex = i;
+          }
+        }
+
+        const newSelected = donutData[currentIndex];
+
+        // CORRECTION 3: Target center angle snapping based on relative Delta!
+        const targetAngle = newSelected.centerAngle;
+        let delta = normalizedRot - targetAngle;
+
+        // Ensure shortest path rotation lock
+        if (delta > 180) delta -= 360;
+        if (delta < -180) delta += 360;
+
+        Animated.spring(wheelAnim, {
+          toValue: rot + delta, // Positively advance delta for reversed standard
+          useNativeDriver: true,
+          friction: 9,   // High friction = no wobble, snaps solidly
+          tension: 40    // Low tension = slower, giving a heavy object feel
+        }).start(() => {
+          isDragging.current = false;
+        });
+
+        if (selected?.label !== newSelected.label) {
+          setSelected(newSelected);
+
+          let indexDiff = currentIndex - (currentInfiniteIndex.current % data.length);
+          if (indexDiff > data.length / 2) indexDiff -= data.length;
+          if (indexDiff < -data.length / 2) indexDiff += data.length;
+          currentInfiniteIndex.current += indexDiff;
+
+          carouselRef.current?.scrollToIndex({
+            index: currentInfiniteIndex.current,
+            animated: true,
+            viewPosition: 0.5
+          });
+        }
+      }
+    })
+  ).current;
+
+  if (!data || data.length === 0) return null;
+
+  const current = selected || data[0];
+
+  const handleSegmentPress = (item: any, index: number) => {
+    setSelected(item);
+
+    let indexDiff = index - (currentInfiniteIndex.current % data.length);
+    if (indexDiff > data.length / 2) indexDiff -= data.length;
+    if (indexDiff < -data.length / 2) indexDiff += data.length;
+    currentInfiniteIndex.current += indexDiff;
+
+    carouselRef.current?.scrollToIndex({
+      index: currentInfiniteIndex.current,
+      animated: true,
+      viewPosition: 0.5
+    });
+  };
+
+  const onMomentumScrollEnd = (event: any) => {
+    const x = event.nativeEvent.contentOffset.x;
+
+    // CORRECTION 2 (Atrito and Math constraint for true center index calculations)
+    // Absolute pure math mapping index without gaps
+    const index = Math.round(x / ITEM_WIDTH);
+
+    if (infiniteData[index] && infiniteData[index].label !== selected?.label) {
+      currentInfiniteIndex.current = index;
+      setSelected(infiniteData[index]);
+    }
+  };
+
+  let offset = 0;
+  const orbitRotate = orbitAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
+  const counterRotate = counterOrbitAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['360deg', '0deg'],
+  });
+
+  const wheelRot = wheelAnim.interpolate({
+    inputRange: [-360, 360],
+    outputRange: ['-360deg', '360deg']
+  });
 
   return (
-    <View style={donutStyles.container}>
-      {/* Gráfico Donut */}
-      <View style={donutStyles.chartWrapper}>
-        <Svg width={size} height={size}>
-          <G rotation="-90" origin={`${center}, ${center}`}>
-            {data.map((item, index) => {
-              const dash = (item.percentage / 100) * circumference;
-              const gap = circumference - dash;
-              const strokeDasharray = `${dash} ${gap}`;
-              const currentOffset = circumference - offset;
-              offset += dash;
+    <View style={[donutStyles.container, { paddingVertical: 5 }]}>
+      {/* Gráfico Donut com HUD Tech */}
+      <View style={[donutStyles.chartWrapper, { height: drawSize, width: drawSize, marginTop: -30, marginBottom: -40 }]}>
+        <Animated.View
+          ref={donutRef}
+          {...panResponder.panHandlers}
+          style={{
+            transform: [
+              { scale: scaleAnim },
+              { rotate: wheelRot }
+            ],
+            width: drawSize,
+            height: drawSize,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: 'transparent'
+          }}
+        >
+          <Svg
+            width={drawSize}
+            height={drawSize}
+            viewBox={`0 0 ${drawSize} ${drawSize}`}
+            style={{ position: 'absolute' }}
+          >
+            <G rotation="-90" origin={`${center}, ${center}`}>
+              {donutData.map((item, index) => {
+                const dash = (item.percentage / 100) * circumference;
+                const gap = circumference - dash;
+                const strokeDasharray = `${dash} ${gap}`;
+                const currentOffset = circumference - offset;
+                offset += dash;
 
-              return (
-                <Circle
-                  key={index}
-                  cx={center}
-                  cy={center}
-                  r={radius}
-                  stroke={item.color}
-                  strokeWidth={strokeWidth}
-                  strokeDasharray={strokeDasharray}
-                  strokeDashoffset={currentOffset}
-                  fill="none"
-                  onPress={() => onPressArc(item.label.toLowerCase())}
-                />
-              );
-            })}
-          </G>
-        </Svg>
+                const animatedOpacity = normalizedWheel.interpolate({
+                  inputRange: item.inputRange,
+                  outputRange: item.opacityOutputRange,
+                  extrapolate: 'clamp'
+                });
+
+                const animatedActive = normalizedWheel.interpolate({
+                  inputRange: item.inputRange,
+                  outputRange: item.activeOutputRange,
+                  extrapolate: 'clamp'
+                });
+
+                return (
+                  <G
+                    key={index}
+                    onPress={() => handleSegmentPress(item, index)}
+                  >
+                    {/* Shadow/Glow via Native Interpolation */}
+                    <AnimatedG opacity={animatedActive}>
+                      <Circle
+                        cx={center}
+                        cy={center}
+                        r={radius}
+                        stroke={item.color}
+                        strokeWidth={strokeWidth + 12}
+                        strokeDasharray={strokeDasharray}
+                        strokeDashoffset={currentOffset}
+                        fill="none"
+                        opacity={0.3}
+                        onPress={() => handleSegmentPress(item, index)}
+                      />
+                    </AnimatedG>
+
+                    {/* Visual Segment via Native Interpolation */}
+                    <AnimatedG opacity={animatedOpacity}>
+                      <Circle
+                        cx={center}
+                        cy={center}
+                        r={radius}
+                        stroke={item.color}
+                        strokeWidth={strokeWidth}
+                        strokeDasharray={strokeDasharray}
+                        strokeDashoffset={currentOffset}
+                        fill="none"
+                        onPress={() => handleSegmentPress(item, index)}
+                      />
+                    </AnimatedG>
+
+                    {/* Dedicated Hit Area (Invisible but large) */}
+                    <Circle
+                      cx={center}
+                      cy={center}
+                      r={radius}
+                      stroke="rgba(255,255,255,0.01)"
+                      strokeWidth={strokeWidth + 40}
+                      strokeDasharray={strokeDasharray}
+                      strokeDashoffset={currentOffset}
+                      fill="none"
+                      onPress={() => handleSegmentPress(item, index)}
+                    />
+                  </G>
+                );
+              })}
+            </G>
+          </Svg>
+
+          <Animated.View style={{
+            position: 'absolute',
+            width: drawSize,
+            height: drawSize,
+            transform: [{ rotate: orbitRotate }]
+          }} pointerEvents="none">
+            <Svg width={drawSize} height={drawSize} viewBox={`0 0 ${drawSize} ${drawSize}`}>
+              <Circle
+                cx={drawSize / 2}
+                cy={drawSize / 2}
+                r={radius + 34}
+                stroke="#a78bfa"
+                strokeWidth={2}
+                strokeDasharray="20 180"
+                fill="none"
+                opacity={0.6}
+              />
+              <Circle
+                cx={drawSize / 2}
+                cy={drawSize / 2}
+                r={radius + 34}
+                stroke="#ffffff"
+                strokeWidth={1}
+                strokeDasharray="2 18"
+                fill="none"
+                opacity={0.4}
+              />
+            </Svg>
+          </Animated.View>
+
+          <Animated.View style={{
+            position: 'absolute',
+            width: drawSize,
+            height: drawSize,
+            transform: [{ rotate: counterRotate }]
+          }} pointerEvents="none">
+            <Svg width={drawSize} height={drawSize} viewBox={`0 0 ${drawSize} ${drawSize}`}>
+              <Circle
+                cx={drawSize / 2}
+                cy={drawSize / 2}
+                r={radius - 28}
+                stroke="#ffffff"
+                strokeWidth={1}
+                strokeDasharray="40 160"
+                fill="none"
+                opacity={0.3}
+              />
+              {/* Small "Pulse" Scanner line */}
+              <Circle
+                cx={drawSize / 2}
+                cy={drawSize / 2}
+                r={radius - 28}
+                stroke="#ffffff"
+                strokeWidth={3}
+                strokeDasharray="2 198"
+                fill="none"
+                opacity={0.8}
+              />
+            </Svg>
+          </Animated.View>
+        </Animated.View>
+
         {/* Info Central */}
         <View style={donutStyles.centerContent} pointerEvents="none">
-          <Text style={donutStyles.centerEmoji}>{dominant?.emoji || '😐'}</Text>
-          <Text style={donutStyles.centerLabel}>{dominant?.label || '-'}</Text>
-          <Text style={donutStyles.centerPercent}>{Math.round(dominant?.percentage || 0)}%</Text>
+          <Text style={donutStyles.centerEmoji}>{current?.emoji || '😐'}</Text>
+          <Text style={donutStyles.centerLabel}>{current?.label || '-'}</Text>
+          <Text style={donutStyles.centerPercent}>{Math.round(current?.percentage || 0)}%</Text>
         </View>
       </View>
 
-      {/* Legenda Dinâmica */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={donutStyles.legendContainer}
-        style={{ width: '100%', marginTop: 24 }}
-      >
-        {data.map((item, index) => (
-          <TouchableOpacity
-            key={index}
-            style={donutStyles.legendItem}
-            onPress={() => onPressArc(item.label.toLowerCase())}
-          >
-            <View style={[donutStyles.legendColorBox, { backgroundColor: item.color }]} />
-            <Text style={donutStyles.legendText}>
-              {item.count} {item.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-    </View>
+      {/* Info de Total */}
+      <View style={donutStyles.totalStats}>
+        <Text style={donutStyles.totalStatsText}>
+          {data.length} emoções registradas
+        </Text>
+      </View>
+
+      {/* Control Container */}
+      <View style={[donutStyles.carouselControlContainer, { marginTop: 10 }]}>
+        <TouchableOpacity
+          style={donutStyles.indicatorContainer}
+          onPress={() => {
+            currentInfiniteIndex.current -= 1;
+            carouselRef.current?.scrollToIndex({
+              index: currentInfiniteIndex.current,
+              animated: true,
+              viewPosition: 0.5
+            });
+            if (infiniteData[currentInfiniteIndex.current]) {
+              setSelected(infiniteData[currentInfiniteIndex.current]);
+            }
+          }}
+        >
+          <Ionicons name="chevron-back" size={24} color="#a78bfa" />
+        </TouchableOpacity>
+
+        <View style={{ width: VIEWPORT_WIDTH, height: 60, overflow: 'hidden' }}>
+          <FlatList
+            ref={carouselRef}
+            data={infiniteData}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            snapToInterval={ITEM_WIDTH}
+            snapToAlignment="center"
+            decelerationRate="fast"
+            onMomentumScrollEnd={onMomentumScrollEnd}
+            scrollEventThrottle={16}
+            getItemLayout={(data, index) => ({
+              length: ITEM_WIDTH,
+              offset: ITEM_WIDTH * index,
+              index,
+            })}
+            keyExtractor={(_, index) => `item-${index}`}
+            contentContainerStyle={{
+              alignItems: 'center',
+            }}
+            renderItem={({ item, index }) => (
+              <View style={{ width: ITEM_WIDTH, alignItems: 'center', justifyContent: 'center' }}>
+                <TouchableOpacity
+                  style={[
+                    donutStyles.legendItem,
+                    { width: ITEM_WIDTH - 16 },
+                    selected?.label === item.label && donutStyles.legendItemActive
+                  ]}
+                  onPress={() => {
+                    if (onPressArc) {
+                      onPressArc(item.label.toLowerCase());
+                    }
+                    if (selected?.label !== item.label) {
+                      handleSegmentPress(item, index);
+                    }
+                  }}
+                >
+                  <View style={[donutStyles.legendColorBox, { backgroundColor: item.color }]} />
+                  <Text style={donutStyles.legendText} numberOfLines={1}>
+                    {item.count} {item.label} ({Math.round(item.percentage)}%)
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          />
+        </View>
+
+        <TouchableOpacity
+          style={donutStyles.indicatorContainer}
+          onPress={() => {
+            currentInfiniteIndex.current += 1;
+            carouselRef.current?.scrollToIndex({
+              index: currentInfiniteIndex.current,
+              animated: true,
+              viewPosition: 0.5
+            });
+            if (infiniteData[currentInfiniteIndex.current]) {
+              setSelected(infiniteData[currentInfiniteIndex.current]);
+            }
+          }}
+        >
+          <Ionicons name="chevron-forward" size={24} color="#a78bfa" />
+        </TouchableOpacity>
+      </View>
+    </View >
   );
 };
 
@@ -566,18 +1084,38 @@ const donutStyles = StyleSheet.create({
   },
   legendContainer: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    alignItems: 'center',
+  },
+  carouselControlContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 24,
-    gap: 12,
+    width: '100%',
+    marginTop: 20,
+    gap: 10,
+  },
+  indicatorContainer: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(139, 92, 246, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   legendItem: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#1f1f2e',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'transparent',
+    justifyContent: 'center',
+  },
+  legendItemActive: {
+    borderColor: '#8b5cf6',
+    backgroundColor: 'rgba(139, 92, 246, 0.15)',
   },
   legendColorBox: {
     width: 12,
@@ -588,6 +1126,20 @@ const donutStyles = StyleSheet.create({
   legendText: {
     color: '#d1d5db',
     fontSize: 13,
+  },
+  totalStats: {
+    marginTop: 15,
+    backgroundColor: 'rgba(139, 92, 246, 0.1)',
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(139, 92, 246, 0.2)',
+  },
+  totalStatsText: {
+    color: '#a78bfa',
+    fontSize: 14,
+    fontWeight: 'bold',
   },
 });
 
@@ -925,11 +1477,12 @@ export default function ExploreScreen() {
   const [moodChart, setMoodChart] = useState<{ points: MoodPoint[]; average: number; trend: string }>({ points: [], average: 0, trend: 'stable' });
   const [radarData, setRadarData] = useState<{ label: string; percentage: number; count: number; color: string; emoji: string }[]>([]);
 
-  // New states for Personas and Life Areas
   const [selectedPersona, setSelectedPersona] = useState('therapeutic');
   const [showPersonaSelector, setShowPersonaSelector] = useState(false);
   const [lifeAreaStats, setLifeAreaStats] = useState<LifeAreaStat[]>([]);
   const [lifeAreaInsight, setLifeAreaInsight] = useState<string | null>(null);
+  const [radarTimeFilter, setRadarTimeFilter] = useState<'hoje' | 'semana' | 'mes' | 'tudo'>('tudo');
+  const [isFilterExpanded, setIsFilterExpanded] = useState(false);
 
   // State para memórias (para MonthEmotion) e streak
   const [memories, setMemories] = useState<LocalMemory[]>([]);
@@ -986,7 +1539,7 @@ export default function ExploreScreen() {
       const emotionData = calculateEmotions(allMemories);
       setEmotions(emotionData);
 
-      // Calculate radar data from emotions
+      // Calculate radar data from emotions (initial load uses 'tudo')
       const radar = calculateRadarData(emotionData, allMemories.length);
       setRadarData(radar);
 
@@ -1014,6 +1567,30 @@ export default function ExploreScreen() {
       setIsRefreshing(false);
     }
   };
+
+  // Re-calculate radar data when filter changes
+  useEffect(() => {
+    if (memories.length > 0) {
+      const now = new Date();
+      let filtered = memories;
+
+      if (radarTimeFilter === 'hoje') {
+        filtered = memories.filter(m => new Date(m.createdAt).toDateString() === now.toDateString());
+      } else if (radarTimeFilter === 'semana') {
+        const lastWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        filtered = memories.filter(m => new Date(m.createdAt) >= lastWeek);
+      } else if (radarTimeFilter === 'mes') {
+        const lastMonth = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        filtered = memories.filter(m => new Date(m.createdAt) >= lastMonth);
+      }
+
+      const emotionData = calculateEmotions(filtered);
+      const radar = calculateRadarData(emotionData, filtered.length);
+      setRadarData(radar);
+    } else {
+      setRadarData([]);
+    }
+  }, [radarTimeFilter, memories]);
 
   // Calculate life area stats from memories
   const calculateLifeAreaStats = (memories: LocalMemory[]): { stats: LifeAreaStat[]; insight: string | null } => {
@@ -1713,7 +2290,6 @@ export default function ExploreScreen() {
         {/* Header content below */}
         <ScrollView
           contentContainerStyle={[styles.scrollContent, { paddingBottom: 100 }]}
-          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor="#8b5cf6" />}
           showsVerticalScrollIndicator={false}
         >
           {!hasData ? (
@@ -1726,7 +2302,67 @@ export default function ExploreScreen() {
             </View>
           ) : (
             <>
-              {/* === 1. TOP: REVISIT === */}
+              {/* === 1. TOP: DONUT CHART (OVERALL PANORAMA) === */}
+              <View style={styles.emotionsContainer}>
+                <View style={styles.radarSection}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 15, zIndex: 10 }}>
+                    <View>
+                      <Text style={styles.sectionTitle}>Panorama Emocional</Text>
+                      <Text style={styles.sectionSubtitle}>Suas emoções recentes</Text>
+                    </View>
+                    <View style={styles.radarFilterContainer}>
+                      <View style={[styles.radarFilterWrapper, isFilterExpanded && styles.radarFilterWrapperExpanded]}>
+                        <TouchableOpacity
+                          style={styles.radarFilterHeaderBtn}
+                          onPress={() => setIsFilterExpanded(!isFilterExpanded)}
+                        >
+                          <Text style={styles.radarFilterTxtActive}>
+                            {radarTimeFilter === 'hoje' ? 'Hoje' : radarTimeFilter === 'semana' ? 'Última Semana' : radarTimeFilter === 'mes' ? 'Último Mês' : 'Visão Geral'}
+                          </Text>
+                          <Ionicons name={isFilterExpanded ? "chevron-up" : "chevron-down"} size={14} color="#8b5cf6" />
+                        </TouchableOpacity>
+
+                        {isFilterExpanded && (
+                          <View style={styles.radarFilterDropdown}>
+                            {(['hoje', 'semana', 'mes', 'tudo'] as const).map((filter) => (
+                              <TouchableOpacity
+                                key={filter}
+                                style={[
+                                  styles.radarFilterDropdownItem,
+                                  radarTimeFilter === filter && styles.radarFilterDropdownItemActive
+                                ]}
+                                onPress={() => {
+                                  setRadarTimeFilter(filter);
+                                  setIsFilterExpanded(false);
+                                }}
+                              >
+                                <Text style={[
+                                  styles.radarFilterTxt,
+                                  radarTimeFilter === filter && styles.radarFilterTxtActive
+                                ]}>
+                                  {filter === 'hoje' ? 'Hoje' : filter === 'semana' ? 'Última Semana' : filter === 'mes' ? 'Último Mês' : 'Visão Geral'}
+                                </Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                        )}
+                      </View>
+                    </View>
+                  </View>
+
+                  {radarData.length > 0 ? (
+                    <View style={styles.radarChartWrapper}>
+                      <EmotionDonutChart data={radarData} size={280} onPressArc={handleEmotionPress} />
+                    </View>
+                  ) : (
+                    <View style={styles.radarEmptyContainer}>
+                      <Text style={styles.radarEmptyText}>Nenhum registro encontrado para este período.</Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+
+              {/* === 2. MIDDLE: REVISIT === */}
               {revisit.length > 0 && (
                 <View style={styles.sectionContainer}>
                   <Text style={styles.sectionTitle}>Revisitar</Text>
@@ -1751,20 +2387,7 @@ export default function ExploreScreen() {
                 </View>
               )}
 
-              {/* === 2. DONUT CHART (OVERALL PANORAMA) === */}
-              <View style={styles.emotionsContainer}>
-                {radarData.length > 0 && (
-                  <View style={styles.radarSection}>
-                    <Text style={styles.sectionTitle}>Panorama Emocional</Text>
-                    <Text style={styles.sectionSubtitle}>Suas emoções recentes</Text>
-                    <View style={styles.radarChartWrapper}>
-                      <EmotionDonutChart data={radarData} size={280} onPressArc={handleEmotionPress} />
-                    </View>
-                  </View>
-                )}
-              </View>
-
-              {/* === 2. MIDDLE: LIFE AREA (AI CONTEXT CAROUSEL) === */}
+              {/* === 3. BOTTOM: LIFE AREA (AI CONTEXT CAROUSEL) === */}
               <View style={styles.lifeAreasContainer}>
                 <Text style={styles.sectionTitle}>Dimensões da Vida</Text>
                 <Text style={styles.sectionSubtitle}>Como você distibui a sua energia</Text>
@@ -2072,6 +2695,72 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     marginTop: 2,
   },
+  radarFilterContainer: {
+    position: 'relative',
+    alignItems: 'flex-end',
+    zIndex: 10,
+  },
+  radarFilterWrapper: {
+    backgroundColor: 'rgba(139, 92, 246, 0.1)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(139, 92, 246, 0.3)',
+  },
+  radarFilterWrapperExpanded: {
+    borderBottomRightRadius: 0,
+    borderBottomLeftRadius: 0,
+    backgroundColor: '#1a1a24',
+  },
+  radarFilterHeaderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  radarFilterDropdown: {
+    position: 'absolute',
+    top: '100%',
+    right: -1,
+    backgroundColor: '#1a1a24',
+    borderBottomRightRadius: 16,
+    borderBottomLeftRadius: 16,
+    borderWidth: 1,
+    borderTopWidth: 0,
+    borderColor: 'rgba(139, 92, 246, 0.3)',
+    paddingBottom: 4,
+    minWidth: '100%',
+    zIndex: 20,
+    overflow: 'hidden',
+  },
+  radarFilterDropdownItem: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  radarFilterDropdownItemActive: {
+    backgroundColor: 'rgba(139, 92, 246, 0.15)',
+  },
+  radarFilterTxt: {
+    fontSize: 13,
+    color: '#9ca3af',
+    fontWeight: '500',
+    textAlign: 'center',
+  },
+  radarFilterTxtActive: {
+    color: '#8b5cf6',
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  radarEmptyContainer: {
+    height: 280,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  radarEmptyText: {
+    color: '#6b7280',
+    fontSize: 14,
+    textAlign: 'center',
+  },
   curatedScroll: {
     paddingLeft: 20,
   },
@@ -2108,10 +2797,10 @@ const styles = StyleSheet.create({
   radarChartWrapper: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 20,
+    paddingVertical: 0,
     backgroundColor: '#1a1a24',
     borderRadius: 20,
-    marginTop: 16,
+    marginTop: 0,
     borderWidth: 1,
     borderColor: '#2d2d3a',
   },

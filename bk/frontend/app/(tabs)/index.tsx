@@ -25,67 +25,14 @@ import { router } from 'expo-router';
 import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
 import { isToday } from 'date-fns';
+import { REFLECTION_PROMPTS, GOAL_PROMPTS } from '../../src/config/Prompts';
+import { getDailyChallenges } from '../../src/services/ChallengeService';
 
 type RecordingState = 'idle' | 'recording' | 'paused' | 'transcribing' | 'preview' | 'saving';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 // Sugestões reflexivas categorizadas
-const REFLECTION_PROMPTS = [
-  // Presente e dia a dia
-  { text: "O que te fez sorrir hoje?", emoji: "😊", category: "presente" },
-  { text: "Como você está se sentindo agora?", emoji: "💭", category: "presente" },
-  { text: "Qual foi o momento mais marcante do dia?", emoji: "✨", category: "presente" },
-  { text: "O que você é grato hoje?", emoji: "🙏", category: "presente" },
-  { text: "O que você aprendeu recentemente?", emoji: "💡", category: "presente" },
-  { text: "Quem fez diferença no seu dia?", emoji: "❤️", category: "presente" },
-  { text: "O que te deixou ansioso?", emoji: "🌊", category: "presente" },
-  { text: "Como foi sua energia hoje?", emoji: "⚡", category: "presente" },
-  { text: "O que te trouxe paz hoje?", emoji: "🕊️", category: "presente" },
-  { text: "Qual conversa te marcou?", emoji: "💬", category: "presente" },
-  // Memórias do passado
-  { text: "Qual lembrança te faz sorrir?", emoji: "🌈", category: "passado" },
-  { text: "Que momento da infância você guarda?", emoji: "🧒", category: "passado" },
-  { text: "Qual viagem marcou sua vida?", emoji: "✈️", category: "passado" },
-  { text: "Quem você gostaria de agradecer?", emoji: "💝", category: "passado" },
-  { text: "Que música te leva ao passado?", emoji: "🎵", category: "passado" },
-  { text: "Qual foi seu momento mais corajoso?", emoji: "🦁", category: "passado" },
-  { text: "Que lugar te traz saudade?", emoji: "🏠", category: "passado" },
-  { text: "Qual foi a melhor surpresa que recebeu?", emoji: "🎁", category: "passado" },
-  { text: "Que cheiro te lembra alguém especial?", emoji: "🌸", category: "passado" },
-  { text: "Qual foi um dia perfeito na sua vida?", emoji: "☀️", category: "passado" },
-  // Reflexão profunda
-  { text: "O que você superou que te orgulha?", emoji: "💪", category: "reflexao" },
-  { text: "Que sonho você ainda quer realizar?", emoji: "🌙", category: "reflexao" },
-  { text: "O que você diria ao seu eu do passado?", emoji: "💌", category: "reflexao" },
-  { text: "Qual momento mudou sua perspectiva?", emoji: "🔮", category: "reflexao" },
-  { text: "O que te fez crescer como pessoa?", emoji: "🌱", category: "reflexao" },
-  { text: "Que erro te ensinou uma lição valiosa?", emoji: "📚", category: "reflexao" },
-  { text: "Qual foi sua maior conquista?", emoji: "🏆", category: "reflexao" },
-  { text: "O que você deseja para o futuro?", emoji: "🌅", category: "reflexao" },
-  { text: "Que memória você nunca quer esquecer?", emoji: "📸", category: "reflexao" },
-  { text: "O que te faz sentir vivo?", emoji: "🔥", category: "reflexao" },
-];
-
-// Goal-specific gamification challenges
-const GOAL_PROMPTS: Record<string, typeof REFLECTION_PROMPTS> = {
-  self_awareness: [
-    { text: "Desafio Diário: Qual emoção tem te visitado mais ultimamente?", emoji: "🧭", category: "autoconhecimento" },
-    { text: "Desafio Diário: O que você aprendeu sobre si mesmo hoje?", emoji: "🪞", category: "autoconhecimento" }
-  ],
-  venting: [
-    { text: "Desafio Diário: Coloque para fora o que está pesando no seu peito hoje.", emoji: "🗣️", category: "desabafo" },
-    { text: "Desafio Diário: Não há julgamentos aqui. Qual frustração você quer liberar?", emoji: "🛡️", category: "desabafo" }
-  ],
-  legacy: [
-    { text: "Desafio Diário: Que história da sua juventude você não quer que se perca?", emoji: "📜", category: "legado" },
-    { text: "Desafio Diário: Se alguém ouvisse isso daqui a 10 anos, o que eles deveriam saber?", emoji: "🕰️", category: "legado" }
-  ],
-  anxiety: [
-    { text: "Desafio Diário: Vamos esvaziar a mente? Liste 3 coisas que estão te preocupando e solte-as.", emoji: "🍃", category: "ansiedade" },
-    { text: "Desafio Diário: Fale devagar sobre algo simples e bom que aconteceu hoje.", emoji: "🌅", category: "ansiedade" }
-  ]
-};
 
 // ========== AI LOADING ANIMATION (Mágica da IA) ==========
 const AI_LOADING_PHRASES = [
@@ -324,26 +271,7 @@ const DailyChallengeCard: React.FC<{ isVisible: boolean; userGoal: string | unde
   const borderAnim = useRef(new Animated.Value(0)).current;
 
   // Use a constant seed based on the current day so challenges don't jump around randomly
-  const [dailyChallenges] = useState(() => {
-    const todayStr = new Date().toDateString();
-    let seed = 0;
-    for (let i = 0; i < todayStr.length; i++) seed += todayStr.charCodeAt(i);
-
-    // Seeded random
-    const random = () => {
-      const x = Math.sin(seed++) * 10000;
-      return x - Math.floor(x);
-    };
-
-    const goalPrompts = userGoal && GOAL_PROMPTS[userGoal] ? [...GOAL_PROMPTS[userGoal]] : [];
-    const generalPrompts = [...REFLECTION_PROMPTS].sort(() => random() - 0.5);
-    const combined = [...goalPrompts, ...generalPrompts].slice(0, 3);
-
-    return combined.map(p => ({
-      ...p,
-      text: p.text.replace(/^Desafio Diário:?\s*/i, '') // Removes "Desafio Diário:" prefix if exists
-    }));
-  });
+  const [dailyChallenges] = useState(() => getDailyChallenges(userGoal));
 
   const hasRemainingChallenges = dailyChallenges.some(c => !completedChallenges.includes(c.text));
 
@@ -841,7 +769,7 @@ export default function RecordScreen() {
         emotion: emotionResult.emotion,
         emotionEmoji: emotionResult.emoji,
         moodScore: emotionResult.score,
-        audioBase64: audioBase64 || undefined,
+        audioBase64: user?.storagePreference === 'text_only' ? undefined : (audioBase64 || undefined),
         durationSeconds: recordingDuration || undefined,
         segments: transcriptionSegments.length > 0 ? transcriptionSegments : undefined,
         emotions: emotionResult.emotions,

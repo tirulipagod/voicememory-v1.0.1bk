@@ -25,10 +25,13 @@ interface AuthContextType {
     isSyncing: boolean;
   };
   refreshSyncStatus: () => Promise<void>;
-  completeOnboarding: (goal: string) => Promise<void>;
+  completeOnboarding: (data: { name: string; birthDate: string; goal: string }) => Promise<void>;
   addAvatarXP: (amount: number) => Promise<void>;
   completeDailyChallenge: (challengeText?: string) => Promise<void>;
   resetDailyChallenges: () => Promise<void>;
+  updateStoragePreference: (pref: 'both' | 'text_only') => Promise<void>;
+  restoreMemory: (id: string) => Promise<void>;
+  permanentlyDeleteMemory: (id: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -299,12 +302,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSyncStatus(status);
   };
 
-  const completeOnboarding = async (goal: string) => {
+  const completeOnboarding = async (data: { name: string; birthDate: string; goal: string }) => {
     if (!user) return;
     const updatedUser = {
       ...user,
+      name: data.name,
+      birthDate: data.birthDate,
+      userGoal: data.goal,
       hasCompletedOnboarding: true,
-      userGoal: goal,
       avatarLevel: user.avatarLevel || 1,
       avatarXP: user.avatarXP || 0,
     };
@@ -332,25 +337,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!user) return;
     const now = new Date();
 
-    // reset array if it's a new day
+    // check if it's a new day to reset today's challenges
     const isToday = (dateString: string) => {
       const d = new Date(dateString);
       return d.toDateString() === now.toDateString();
     };
 
-    let completed = user.completedDailyChallenges || [];
+    let completedToday = user.completedDailyChallenges || [];
     if (user.lastChallengeCompletedAt && !isToday(user.lastChallengeCompletedAt)) {
-      completed = [];
+      completedToday = [];
     }
 
-    if (challengeText && !completed.includes(challengeText)) {
-      completed.push(challengeText);
+    if (challengeText && !completedToday.includes(challengeText)) {
+      completedToday.push(challengeText);
+    }
+
+    // Update all-time history
+    const history = user.allTimeCompletedChallenges || [];
+    if (challengeText && !history.some((h: any) => h.text === challengeText)) {
+      history.push({
+        text: challengeText,
+        completedAt: now.toISOString(),
+        emoji: '⭐' // Fallback emoji
+      });
     }
 
     const updatedUser = {
       ...user,
       lastChallengeCompletedAt: now.toISOString(),
-      completedDailyChallenges: completed,
+      completedDailyChallenges: completedToday,
+      allTimeCompletedChallenges: history,
     };
     await localStorage.saveUser(updatedUser);
     setUser(updatedUser);
@@ -365,6 +381,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
     await localStorage.saveUser(updatedUser);
     setUser(updatedUser);
+  };
+
+  const updateStoragePreference = async (pref: 'both' | 'text_only') => {
+    if (!user) return;
+    const updatedUser = { ...user, storagePreference: pref };
+    await localStorage.saveUser(updatedUser);
+    setUser(updatedUser);
+  };
+
+  const restoreMemory = async (id: string) => {
+    await localStorage.restoreMemory(id);
+  };
+
+  const permanentlyDeleteMemory = async (id: string) => {
+    await localStorage.permanentlyDeleteMemory(id);
   };
 
   return (
@@ -385,6 +416,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         addAvatarXP,
         completeDailyChallenge,
         resetDailyChallenges,
+        updateStoragePreference,
+        restoreMemory,
+        permanentlyDeleteMemory,
       }}
     >
       {children}

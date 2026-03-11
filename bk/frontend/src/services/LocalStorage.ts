@@ -21,10 +21,17 @@ export interface LocalUser {
   createdAt: string;
   hasCompletedOnboarding?: boolean;
   userGoal?: string;
+  birthDate?: string;
   avatarLevel?: number;
   avatarXP?: number;
   lastChallengeCompletedAt?: string;
   completedDailyChallenges?: string[];
+  allTimeCompletedChallenges?: Array<{
+    text: string;
+    completedAt: string;
+    emoji?: string;
+  }>;
+  storagePreference?: 'both' | 'text_only';
 }
 
 export interface EmotionDetail {
@@ -111,7 +118,10 @@ class LocalStorageService {
     const memories = await this.getAllMemoriesIncludingDeleted();
     const existingIndex = memories.findIndex(m => m.id === memory.id);
 
-    if (memory.audioBase64) {
+    const user = await this.getUser();
+    const storagePref = user?.storagePreference || 'both';
+
+    if (memory.audioBase64 && storagePref === 'both') {
       try {
         const audioFile = new File(Paths.document, `audio_${memory.id}.txt`);
         if (!audioFile.exists) {
@@ -182,6 +192,40 @@ class LocalStorageService {
     } else {
       console.log('Memory not found for deletion:', id);
     }
+  }
+
+  async restoreMemory(id: string): Promise<void> {
+    const memories = await this.getAllMemoriesIncludingDeleted();
+    const index = memories.findIndex(m => m.id === id);
+    if (index >= 0) {
+      memories[index] = {
+        ...memories[index],
+        deleted: false,
+        synced: false,
+        updatedAt: new Date().toISOString()
+      };
+      await AsyncStorage.setItem(STORAGE_KEYS.MEMORIES, JSON.stringify(memories));
+    }
+  }
+
+  async permanentlyDeleteMemory(id: string): Promise<void> {
+    const memories = await this.getAllMemoriesIncludingDeleted();
+    const filtered = memories.filter(m => m.id !== id);
+
+    // Also delete audio file
+    try {
+      const audioFile = new File(Paths.document, `audio_${id}.txt`);
+      if (audioFile.exists) {
+        audioFile.delete();
+      }
+    } catch (e) { }
+
+    await AsyncStorage.setItem(STORAGE_KEYS.MEMORIES, JSON.stringify(filtered));
+  }
+
+  async getDeletedMemories(): Promise<LocalMemory[]> {
+    const all = await this.getAllMemoriesIncludingDeleted();
+    return all.filter(m => m.deleted);
   }
 
   async deleteMemoryAudio(id: string): Promise<void> {

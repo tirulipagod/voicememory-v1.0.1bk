@@ -24,6 +24,7 @@ import Constants from 'expo-constants';
 import * as Application from 'expo-application';
 import { GOOGLE_CONFIG } from '../../src/config/google';
 import { AvatarWidget } from '../../src/components/AvatarWidget';
+import { getDailyChallenges } from '../../src/services/ChallengeService';
 
 const { width } = Dimensions.get('window');
 
@@ -67,8 +68,6 @@ interface LivingProfile {
 // Expandable Dimension Card Component
 const DimensionCard = memo(({ dimension, onPress }: { dimension: ProfileDimension; onPress: () => void }) => {
   const scaleAnim = useRef(new Animated.Value(1)).current;
-  const [isExpanded, setIsExpanded] = useState(false);
-  const expandAnim = useRef(new Animated.Value(0)).current;
 
   const iconMap: Record<string, string> = {
     brain: 'bulb-outline',
@@ -89,34 +88,14 @@ const DimensionCard = memo(({ dimension, onPress }: { dimension: ProfileDimensio
 
   const conf = getConfidenceLabel(dimension.confidence);
 
-  const toggleExpand = () => {
-    const toValue = isExpanded ? 0 : 1;
-    Animated.spring(expandAnim, {
-      toValue,
-      useNativeDriver: false,
-      friction: 8,
-    }).start();
-    setIsExpanded(!isExpanded);
-  };
-
-  const expandedHeight = expandAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, 120],
-  });
-
-  const rotateIcon = expandAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['0deg', '90deg'],
-  });
-
   return (
     <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
       <TouchableOpacity
         style={[styles.dimensionCard, { borderLeftColor: dimension.color }]}
-        onPress={toggleExpand}
+        onPress={onPress}
         onPressIn={() => Animated.spring(scaleAnim, { toValue: 0.98, useNativeDriver: true }).start()}
         onPressOut={() => Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true }).start()}
-        activeOpacity={0.95}
+        activeOpacity={0.9}
       >
         <View style={styles.dimensionHeader}>
           <View style={[styles.dimensionIconContainer, { backgroundColor: dimension.color + '20' }]}>
@@ -129,25 +108,12 @@ const DimensionCard = memo(({ dimension, onPress }: { dimension: ProfileDimensio
               <Text style={[styles.confidenceText, { color: conf.color }]}>{conf.label}</Text>
             </View>
           </View>
-          <Animated.View style={{ transform: [{ rotate: rotateIcon }] }}>
-            <Ionicons name="chevron-forward" size={18} color="#6b7280" />
-          </Animated.View>
+          <Ionicons name="chevron-forward" size={18} color="#4b5563" />
         </View>
-        <Text style={styles.dimensionInsight}>{dimension.insight}</Text>
-
-        {/* Expandable Content */}
-        <Animated.View style={[styles.expandedContent, { maxHeight: expandedHeight, overflow: 'hidden' }]}>
-          {dimension.details && (
-            <Text style={styles.dimensionDetails}>{dimension.details}</Text>
-          )}
-          <TouchableOpacity
-            style={styles.viewMoreButton}
-            onPress={onPress}
-          >
-            <Text style={[styles.viewMoreText, { color: dimension.color }]}>Ver análise completa</Text>
-            <Ionicons name="arrow-forward" size={14} color={dimension.color} />
-          </TouchableOpacity>
-        </Animated.View>
+        <Text style={styles.dimensionInsight} numberOfLines={2}>{dimension.insight}</Text>
+        <View style={styles.dimensionCardFooter}>
+          <Text style={[styles.dimensionCardAction, { color: dimension.color }]}>Ver análise completa</Text>
+        </View>
       </TouchableOpacity>
     </Animated.View>
   );
@@ -169,15 +135,30 @@ const ReflectionCard = memo(({ reflection }: { reflection: ReflectionQuestion })
 });
 
 export default function ProfileScreen() {
-  const { user, accessToken, signOut, syncWithDrive, syncStatus, refreshSyncStatus, isAdmin, resetDailyChallenges } = useAuth();
+  const {
+    user,
+    accessToken,
+    signOut,
+    syncWithDrive,
+    syncStatus,
+    refreshSyncStatus,
+    isAdmin,
+    resetDailyChallenges,
+    updateStoragePreference,
+    restoreMemory,
+    permanentlyDeleteMemory
+  } = useAuth();
   const [profile, setProfile] = useState<LivingProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const dailyChallenges = React.useMemo(() => getDailyChallenges(user?.userGoal), [user?.userGoal]);
   const [selectedDimension, setSelectedDimension] = useState<ProfileDimension | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showChallengeModal, setShowChallengeModal] = useState(false);
   const [showChallengeHistory, setShowChallengeHistory] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [showTrash, setShowTrash] = useState(false);
+  const [deletedMemories, setDeletedMemories] = useState<LocalMemory[]>([]);
   // Estado para modal de erro de sincronização (substitui Alert para funcionar melhor no Web)
   const [syncErrorModal, setSyncErrorModal] = useState<{
     visible: boolean;
@@ -256,8 +237,40 @@ export default function ProfileScreen() {
 
   const fetchProfile = async (forceRefresh = false) => {
     try {
-      // Get memories from local storage to generate profile
+      setIsLoading(true);
       const memories = await localStorage.getMemories();
+
+      // IF has backend and enough memories, try deep analysis
+      if (memories.length >= 3) {
+        try {
+          const timeout = 10000; // 10s timeout
+          const controller = new AbortController();
+          const id = setTimeout(() => controller.abort(), timeout);
+
+          const backendUrl = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+          const response = await fetch(`${backendUrl}/api/profile/living${forceRefresh ? '?force_refresh=true' : ''}`, {
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              'Content-Type': 'application/json'
+            },
+            signal: controller.signal
+          });
+
+          clearTimeout(id);
+
+          if (response.ok) {
+            const remoteProfile = await response.json();
+            setProfile(remoteProfile);
+            setIsLoading(false);
+            setIsRefreshing(false);
+            return;
+          }
+        } catch (backendError) {
+          console.log('Backend profile analysis failed, falling back to local:', backendError);
+        }
+      }
+
+      // FALLBACK: Local Analysis (enhanced for current rules)
 
       if (memories.length < 3) {
         setProfile({
@@ -872,6 +885,66 @@ export default function ProfileScreen() {
               <Ionicons name="chevron-forward" size={18} color="#6b7280" />
             </TouchableOpacity>
 
+            <View style={styles.settingsDivider} />
+
+            <View style={styles.themeSection}>
+              <View style={styles.settingsItemNoBorder}>
+                <Ionicons name="save-outline" size={22} color="#9ca3af" />
+                <Text style={styles.settingsItemText}>Preferência de Armazenamento</Text>
+              </View>
+              <View style={styles.themeOptionsRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.themeOption,
+                    (user?.storagePreference === 'both' || !user?.storagePreference) && styles.themeOptionActive
+                  ]}
+                  onPress={() => updateStoragePreference('both')}
+                >
+                  <Ionicons
+                    name="mic-outline"
+                    size={20}
+                    color={(user?.storagePreference === 'both' || !user?.storagePreference) ? "#8b5cf6" : "#9ca3af"}
+                  />
+                  <Text style={[
+                    styles.themeOptionText,
+                    (user?.storagePreference === 'both' || !user?.storagePreference) && styles.themeOptionTextActive
+                  ]}>Áudio + Texto</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.themeOption,
+                    user?.storagePreference === 'text_only' && styles.themeOptionActive
+                  ]}
+                  onPress={() => updateStoragePreference('text_only')}
+                >
+                  <Ionicons
+                    name="text-outline"
+                    size={20}
+                    color={user?.storagePreference === 'text_only' ? "#8b5cf6" : "#9ca3af"}
+                  />
+                  <Text style={[
+                    styles.themeOptionText,
+                    user?.storagePreference === 'text_only' && styles.themeOptionTextActive
+                  ]}>Apenas Texto</Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.sectionSubtitle}>Economize espaço mantendo apenas a transcrição das memórias.</Text>
+            </View>
+
+            <TouchableOpacity
+              style={styles.settingsItem}
+              onPress={async () => {
+                const deleted = await localStorage.getDeletedMemories();
+                setDeletedMemories(deleted);
+                setShowSettings(false);
+                setShowTrash(true);
+              }}
+            >
+              <Ionicons name="trash-outline" size={22} color="#9ca3af" />
+              <Text style={styles.settingsItemText}>Lixeira</Text>
+              <Ionicons name="chevron-forward" size={18} color="#6b7280" />
+            </TouchableOpacity>
+
             <TouchableOpacity style={styles.settingsItem}>
               <Ionicons name="shield-outline" size={22} color="#9ca3af" />
               <Text style={styles.settingsItemText}>Privacidade</Text>
@@ -1008,7 +1081,88 @@ export default function ProfileScreen() {
     </Modal>
   );
 
-  // Modal de erro de sincronização (substitui Alert.alert para funcionar no Web)
+  const renderTrashModal = () => {
+    return (
+      <Modal visible={showTrash} animationType="slide" transparent onRequestClose={() => setShowTrash(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.trashModalContent}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>Lixeira</Text>
+                <Text style={styles.modalSubtitle}>Memórias excluídas são mantidas aqui</Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowTrash(false)} style={styles.modalClose}>
+                <Ionicons name="close" size={24} color="#9ca3af" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.trashList} showsVerticalScrollIndicator={false}>
+              {deletedMemories.length === 0 ? (
+                <View style={styles.emptyTrash}>
+                  <Ionicons name="trash-outline" size={48} color="#4b5563" />
+                  <Text style={styles.emptyTrashText}>Sua lixeira está vazia</Text>
+                </View>
+              ) : (
+                deletedMemories.map(memory => (
+                  <View key={memory.id} style={styles.trashCard}>
+                    <View style={styles.trashCardContent}>
+                      <Text style={styles.trashCardEmoji}>{memory.emotionEmoji}</Text>
+                      <View style={styles.trashCardTexts}>
+                        <Text style={styles.trashCardDate}>
+                          {new Date(memory.createdAt).toLocaleDateString('pt-BR')}
+                        </Text>
+                        <Text style={styles.trashCardTranscription} numberOfLines={2}>
+                          {memory.transcription}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={styles.trashCardActions}>
+                      <TouchableOpacity
+                        style={styles.restoreButton}
+                        onPress={async () => {
+                          await restoreMemory(memory.id);
+                          const updated = await localStorage.getDeletedMemories();
+                          setDeletedMemories(updated);
+                          fetchProfile(); // Update memory count
+                        }}
+                      >
+                        <Ionicons name="refresh" size={18} color="#10b981" />
+                        <Text style={styles.restoreButtonText}>Restaurar</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.permanentDeleteButton}
+                        onPress={() => {
+                          Alert.alert(
+                            'Excluir permanentemente',
+                            'Esta ação não pode ser desfeita. Deseja continuar?',
+                            [
+                              { text: 'Cancelar', style: 'cancel' },
+                              {
+                                text: 'Excluir',
+                                style: 'destructive',
+                                onPress: async () => {
+                                  await permanentlyDeleteMemory(memory.id);
+                                  const updated = await localStorage.getDeletedMemories();
+                                  setDeletedMemories(updated);
+                                }
+                              }
+                            ]
+                          );
+                        }}
+                      >
+                        <Ionicons name="trash-bin" size={18} color="#ef4444" />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ))
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
   const renderSyncErrorModal = () => (
     <Modal visible={syncErrorModal.visible} transparent animationType="fade">
       <View style={styles.syncErrorOverlay}>
@@ -1064,57 +1218,58 @@ export default function ProfileScreen() {
             <ScrollView style={styles.challengeList} showsVerticalScrollIndicator={false}>
               {showChallengeHistory ? (
                 <>
-                  <View style={styles.challengeItemCompleted}>
-                    <Text style={styles.challengeEmoji}>🚀</Text>
-                    <View style={styles.challengeTexts}>
-                      <Text style={styles.challengeItemTitle}>O que te motiva hoje?</Text>
-                      <Text style={styles.challengeDate}>Concluído Ontem</Text>
+                  {user?.allTimeCompletedChallenges && user.allTimeCompletedChallenges.length > 0 ? (
+                    [...user.allTimeCompletedChallenges].reverse().map((h, i) => (
+                      <View key={i} style={styles.challengeItemCompleted}>
+                        <Text style={styles.challengeEmoji}>{h.emoji || '⭐'}</Text>
+                        <View style={styles.challengeTexts}>
+                          <Text style={styles.challengeItemTitle}>{h.text}</Text>
+                          <Text style={styles.challengeDate}>
+                            Concluído em {new Date(h.completedAt).toLocaleDateString()}
+                          </Text>
+                        </View>
+                        <Ionicons name="checkmark-circle" size={20} color="#10b981" />
+                      </View>
+                    ))
+                  ) : (
+                    <View style={{ alignItems: 'center', padding: 20 }}>
+                      <Text style={{ color: '#6b7280' }}>Nenhum desafio concluído ainda</Text>
                     </View>
-                    <Ionicons name="checkmark-circle" size={20} color="#10b981" />
-                  </View>
-                  <View style={styles.challengeItemCompleted}>
-                    <Text style={styles.challengeEmoji}>🌟</Text>
-                    <View style={styles.challengeTexts}>
-                      <Text style={styles.challengeItemTitle}>Qual sua maior conquista recente?</Text>
-                      <Text style={styles.challengeDate}>Concluído há 2 dias</Text>
-                    </View>
-                    <Ionicons name="checkmark-circle" size={20} color="#10b981" />
-                  </View>
-                  <View style={styles.challengeItemCompleted}>
-                    <Text style={styles.challengeEmoji}>😌</Text>
-                    <View style={styles.challengeTexts}>
-                      <Text style={styles.challengeItemTitle}>Fale de um momento de paz.</Text>
-                      <Text style={styles.challengeDate}>Concluído há 5 dias</Text>
-                    </View>
-                    <Ionicons name="checkmark-circle" size={20} color="#10b981" />
-                  </View>
+                  )}
                 </>
               ) : (
                 <>
-                  <View style={styles.challengeItem}>
-                    <Text style={styles.challengeEmoji}>🧭</Text>
-                    <View style={styles.challengeTexts}>
-                      <Text style={styles.challengeItemTitle}>Qual emoção tem te visitado mais?</Text>
-                      <Text style={styles.challengeDate}>Pendente</Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={20} color="#6b7280" />
-                  </View>
-                  <View style={styles.challengeItem}>
-                    <Text style={styles.challengeEmoji}>🪞</Text>
-                    <View style={styles.challengeTexts}>
-                      <Text style={styles.challengeItemTitle}>O que você aprendeu sobre si?</Text>
-                      <Text style={styles.challengeDate}>Pendente</Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={20} color="#6b7280" />
-                  </View>
-                  <View style={styles.challengeItem}>
-                    <Text style={styles.challengeEmoji}>✨</Text>
-                    <View style={styles.challengeTexts}>
-                      <Text style={styles.challengeItemTitle}>O que te fez sorrir hoje?</Text>
-                      <Text style={styles.challengeDate}>Pendente</Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={20} color="#6b7280" />
-                  </View>
+                  {dailyChallenges.map((challenge, index) => {
+                    const isCompleted = user?.completedDailyChallenges?.includes(challenge.text);
+                    return (
+                      <TouchableOpacity
+                        key={index}
+                        style={isCompleted ? styles.challengeItemCompleted : styles.challengeItem}
+                        onPress={() => {
+                          if (!isCompleted) {
+                            setShowChallengeModal(false);
+                            router.push({
+                              pathname: '/challenge',
+                              params: { text: challenge.text, emoji: challenge.emoji } as any
+                            });
+                          }
+                        }}
+                      >
+                        <Text style={styles.challengeEmoji}>{challenge.emoji}</Text>
+                        <View style={styles.challengeTexts}>
+                          <Text style={styles.challengeItemTitle}>{challenge.text}</Text>
+                          <Text style={styles.challengeDate}>
+                            {isCompleted ? 'Concluído' : 'Pendente'}
+                          </Text>
+                        </View>
+                        <Ionicons
+                          name={isCompleted ? "checkmark-circle" : "chevron-forward"}
+                          size={20}
+                          color={isCompleted ? "#10b981" : "#6b7280"}
+                        />
+                      </TouchableOpacity>
+                    );
+                  })}
                 </>
               )}
             </ScrollView>
@@ -1204,6 +1359,7 @@ export default function ProfileScreen() {
       {renderChallengeModal()}
       {renderDimensionModal()}
       {renderSettingsModal()}
+      {renderTrashModal()}
       {renderSyncErrorModal()}
     </SafeAreaView>
   );
@@ -1381,12 +1537,22 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#e5e7eb',
     lineHeight: 20,
+    marginTop: 4,
   },
-  dimensionDetails: {
-    fontSize: 13,
-    color: '#9ca3af',
-    marginTop: 8,
-    lineHeight: 18,
+  dimensionCardFooter: {
+    marginTop: 12,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#2d2d3a',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+  },
+  dimensionCardAction: {
+    fontSize: 12,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   expandedContent: {
     marginTop: 12,
@@ -2000,5 +2166,95 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#8b5cf6',
     fontWeight: '600',
+  },
+  trashModalContent: {
+    backgroundColor: '#12121a',
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    padding: 24,
+    maxHeight: '85%',
+    width: '100%',
+  },
+  modalSubtitle: {
+    fontSize: 14,
+    color: '#6b7280',
+    marginTop: 4,
+  },
+  trashList: {
+    marginTop: 20,
+    flexGrow: 1,
+  },
+  emptyTrash: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+    gap: 16,
+  },
+  emptyTrashText: {
+    fontSize: 16,
+    color: '#4b5563',
+    fontWeight: '500',
+  },
+  trashCard: {
+    backgroundColor: '#1a1a24',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#2d2d3a',
+  },
+  trashCardContent: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  trashCardEmoji: {
+    fontSize: 32,
+    backgroundColor: '#0d0d12',
+    padding: 8,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  trashCardTexts: {
+    flex: 1,
+  },
+  trashCardDate: {
+    fontSize: 12,
+    color: '#8b5cf6',
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  trashCardTranscription: {
+    fontSize: 14,
+    color: '#d1d5db',
+    lineHeight: 20,
+  },
+  trashCardActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: 16,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#2d2d3a',
+    gap: 12,
+  },
+  restoreButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    gap: 6,
+  },
+  restoreButtonText: {
+    fontSize: 13,
+    color: '#10b981',
+    fontWeight: '600',
+  },
+  permanentDeleteButton: {
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    padding: 6,
+    borderRadius: 8,
   },
 });

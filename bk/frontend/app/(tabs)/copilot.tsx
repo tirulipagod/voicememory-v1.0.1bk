@@ -24,6 +24,10 @@ import Constants from 'expo-constants';
 import * as Speech from 'expo-speech';
 import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
+import { Audio } from 'expo-av';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Haptics from 'expo-haptics';
+import { PanResponder } from 'react-native';
 
 const { width } = Dimensions.get('window');
 
@@ -74,6 +78,15 @@ const CHAT_PERSONAS = [
     description: 'Organiza fatos',
     requiredMemories: 15,
   },
+  {
+    id: 'analytical',
+    name: 'Analítico',
+    icon: 'stats-chart',
+    color: '#0ea5e9',
+    emoji: '📊',
+    description: 'Feedback baseado em dados',
+    requiredMemories: 10,
+  },
 ];
 
 interface ChatMessage {
@@ -114,8 +127,36 @@ export default function CopilotScreen() {
 
   // TTS state
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
+  // Voice interaction state
+  const [isRecording, setIsRecording] = useState(false);
+  const [isLocked, setIsLocked] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const recordingRef = useRef<Audio.Recording | null>(null);
+  const recordingStartTimestamp = useRef<number>(0);
+  const recordingTimerRef = useRef<any>(null);
+  const isPreparingRecordingRef = useRef(false);
+  const shouldStopImmediatelyRef = useRef(false);
+  const panY = useRef(new Animated.Value(0)).current;
+  const panX = useRef(new Animated.Value(0)).current;
+  const micScale = useRef(new Animated.Value(1)).current;
+  const [isPaused, setIsPaused] = useState(false);
+  const [isPressingMic, setIsPressingMic] = useState(false);
+  const [isInputExpanded, setIsInputExpanded] = useState(false);
+  const [showCitationModal, setShowCitationModal] = useState(false);
+  const [currentCitations, setCurrentCitations] = useState<string[]>([]);
 
+  // Refs for PanResponder state access
+  const isRecordingRef_res = useRef(false);
+  const isLockedRef_res = useRef(false);
+
+  useEffect(() => {
+    isRecordingRef_res.current = isRecording;
+    isLockedRef_res.current = isLocked;
+  }, [isRecording, isLocked]);
+
+  // Refs
   const scrollViewRef = useRef<ScrollView>(null);
+  const inputRef = useRef<TextInput>(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
   // Load data when screen receives focus
@@ -214,6 +255,7 @@ export default function CopilotScreen() {
   useEffect(() => {
     return () => {
       Speech.stop();
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
     };
   }, []);
 
@@ -292,16 +334,19 @@ export default function CopilotScreen() {
     }, 100);
 
     try {
-      const memoryContext = memories.slice(0, 20).map(m => ({
-        id: m.id,
-        transcription: m.transcription,
-        emotion: m.emotion,
-        emotionEmoji: m.emotionEmoji,
-        moodScore: m.moodScore,
-        createdAt: m.createdAt,
-        memoryDate: m.memoryDate || null,
-        summary: m.summary || null,
-      }));
+      const memoryContext = memories
+        .filter(m => !m.deleted)
+        .slice(0, 20)
+        .map(m => ({
+          id: m.id,
+          transcription: m.transcription,
+          emotion: m.emotion,
+          emotionEmoji: m.emotionEmoji,
+          moodScore: m.moodScore,
+          createdAt: m.createdAt,
+          memoryDate: m.memoryDate || null,
+          summary: m.summary || null,
+        }));
 
       const backendUrl = getBackendUrl();
       const response = await fetch(`${backendUrl}/api/chat/memories`, {
@@ -313,6 +358,11 @@ export default function CopilotScreen() {
           message: userMessage.content,
           persona: selectedPersona.id,
           memories: memoryContext,
+          user_context: {
+            name: user?.name,
+            birth_date: user?.birthDate,
+            goal: user?.userGoal
+          }
         }),
       });
 
@@ -371,6 +421,263 @@ export default function CopilotScreen() {
       }, 100);
     }
   };
+
+  const startRecordingChat = async () => {
+    if (isPreparingRecordingRef.current || isRecording) {
+      console.log('Skipping startRecordingChat: already preparing or recording');
+      return;
+    }
+
+    try {
+      setIsRecording(true); // Optimistic UI
+      isPreparingRecordingRef.current = true;
+      shouldStopImmediatelyRef.current = false;
+
+      // Emergency cleanup: ensure no previous recording is hanging
+      if (recordingRef.current) {
+        try {
+          await recordingRef.current.stopAndUnloadAsync().catch(() => { });
+        } catch (e) { }
+        recordingRef.current = null;
+      }
+
+      const { status: permStatus } = await Audio.requestPermissionsAsync();
+      if (permStatus !== 'granted') {
+        setIsRecording(false);
+        return;
+      }
+
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: false,
+        shouldDuckAndroid: true,
+        playThroughEarpieceAndroid: false,
+      });
+
+      // Haptic feedback for start
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+      Animated.spring(micScale, { toValue: 1.5, useNativeDriver: true }).start();
+
+      console.log('Creating new recording object...');
+      const { recording } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY
+      );
+
+      if (shouldStopImmediatelyRef.current) {
+        console.log('Directly stopping: user released during preparation');
+        await recording.stopAndUnloadAsync().catch(() => { });
+        setIsRecording(false);
+        return;
+      }
+
+      recordingRef.current = recording;
+      recordingStartTimestamp.current = Date.now();
+      // Ensure we are in recording state
+      setIsRecording(true);
+      setIsLocked(false);
+      setRecordingTime(0);
+
+      // Start timer
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingTime(Math.floor((Date.now() - recordingStartTimestamp.current) / 1000));
+      }, 1000);
+
+    } catch (err) {
+      console.error('Core error in startRecordingChat:', err);
+      recordingRef.current = null;
+      setIsRecording(false);
+    } finally {
+      isPreparingRecordingRef.current = false;
+    }
+  };
+  const stopRecordingChat = async (shouldCancel = false) => {
+    // 1. Defesa para evitar chamadas duplicadas
+    if (isPreparingRecordingRef.current) {
+      console.log('stopRecordingChat: ainda preparando, marcando para parar assim que pronto');
+      shouldStopImmediatelyRef.current = true;
+      return;
+    }
+
+    if (!isRecording && !recordingRef.current) return;
+
+    // 2. Captura o objeto e limpa a referência IMEDIATAMENTE antes de qualquer await
+    const recording = recordingRef.current;
+    recordingRef.current = null;
+    setIsRecording(false);
+    setIsLocked(false);
+
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+
+    if (!recording) return;
+
+    try {
+      const duration = Date.now() - recordingStartTimestamp.current;
+
+      // 3. Verifica se deve cancelar ou se foi muito curto
+      if (shouldCancel || duration < 800) {
+        console.log('Descartando gravação (cancelada ou muito curta)');
+        await recording.stopAndUnloadAsync().catch(() => { });
+        return;
+      }
+
+      console.log('Finalizando e processando gravação...');
+      await recording.stopAndUnloadAsync();
+      const uri = recording.getURI();
+
+      if (uri) {
+        setIsLoading(true);
+        const base64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
+        const backendUrl = getBackendUrl();
+        const response = await fetch(`${backendUrl}/api/transcribe`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ audio_base64: base64 }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data.transcription) {
+            setInputText(data.transcription);
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          }
+        }
+      }
+    } catch (err: any) {
+      console.error('Erro ao processar parada de gravação:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const formatRecordingTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const pauseRecordingChat = async () => {
+    if (!recordingRef.current || isPaused) return;
+    try {
+      const status = await recordingRef.current.getStatusAsync();
+      if (!status.canRecord) {
+        console.log('Cannot pause: recording not in a recordable state', status);
+        return;
+      }
+
+      await recordingRef.current.pauseAsync();
+      setIsPaused(true);
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch (err: any) {
+      console.error('Failed to pause recording', err);
+    }
+  };
+
+  const resumeRecordingChat = async () => {
+    if (!recordingRef.current || !isPaused) return;
+    try {
+      const status = await recordingRef.current.getStatusAsync();
+
+      // If for some reason it's already recording, just update UI
+      if (status.isRecording) {
+        setIsPaused(false);
+        return;
+      }
+
+      await recordingRef.current.startAsync();
+      setIsPaused(false);
+
+      // Sync timer
+      recordingStartTimestamp.current = Date.now() - (recordingTime * 1000);
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingTime(Math.floor((Date.now() - recordingStartTimestamp.current) / 1000));
+      }, 1000);
+
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch (err: any) {
+      console.error('Failed to resume recording', err);
+      if (err?.toString().includes('not started') || err?.toString().includes('not prepared')) {
+        console.log('Attempting emergency start...');
+        try {
+          await recordingRef.current?.startAsync();
+          setIsPaused(false);
+        } catch (innerErr) {
+          console.error('Emergency restart failed', innerErr);
+        }
+      }
+    }
+  };
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onPanResponderGrant: () => {
+        setIsPressingMic(true);
+        Animated.spring(micScale, { toValue: 1.5, useNativeDriver: true }).start();
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        startRecordingChat();
+      },
+      onPanResponderMove: (_, gestureState) => {
+        if (!isRecordingRef_res.current || isLockedRef_res.current) return;
+
+        // Restriction: Only move left (negative dx) or up (negative dy)
+        if (Math.abs(gestureState.dy) > Math.abs(gestureState.dx)) {
+          // Priority Up
+          panY.setValue(Math.max(-130, Math.min(0, gestureState.dy)));
+          panX.setValue(0);
+        } else {
+          // Priority Left 
+          panX.setValue(Math.max(-150, Math.min(0, gestureState.dx)));
+          panY.setValue(0);
+        }
+
+        // Drag up to lock (negative dy)
+        if (gestureState.dy < -70) {
+          setIsLocked(true);
+          setIsPressingMic(false);
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+          Animated.parallel([
+            Animated.spring(micScale, { toValue: 1, useNativeDriver: true }),
+            Animated.spring(panY, { toValue: 0, useNativeDriver: true }),
+            Animated.spring(panX, { toValue: 0, useNativeDriver: true })
+          ]).start();
+        }
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        setIsPressingMic(false);
+        if (isLockedRef_res.current) return;
+
+        if (gestureState.dx < -80) {
+          stopRecordingChat(true);
+        } else {
+          stopRecordingChat(false);
+        }
+        Animated.parallel([
+          Animated.spring(micScale, { toValue: 1, useNativeDriver: true }),
+          Animated.spring(panY, { toValue: 0, useNativeDriver: true }),
+          Animated.spring(panX, { toValue: 0, useNativeDriver: true })
+        ]).start();
+      },
+      onPanResponderTerminate: () => {
+        setIsPressingMic(false);
+        if (!isLockedRef_res.current) {
+          stopRecordingChat(true);
+        }
+        Animated.parallel([
+          Animated.spring(micScale, { toValue: 1, useNativeDriver: true }),
+          Animated.spring(panY, { toValue: 0, useNativeDriver: true }),
+          Animated.spring(panX, { toValue: 0, useNativeDriver: true })
+        ]).start();
+      },
+    })
+  ).current;
 
   // Session management functions
   const handleEditTitle = async () => {
@@ -440,27 +747,72 @@ export default function CopilotScreen() {
   const renderMessageTextWithCitations = (content: string, isUser: boolean) => {
     // Regex splits the string by bold or memory citations {{ID}}
     const regex = /(\*\*.*?\*\*|\{\{.*?\}\})/g;
-    const parts = content.split(regex);
+    const initialParts = content.split(regex);
+
+    // Logic to group consecutive citations
+    const parts: any[] = [];
+    let i = 0;
+    while (i < initialParts.length) {
+      const part = initialParts[i];
+      if (part.startsWith('{{') && part.endsWith('}}')) {
+        const group = [part.slice(2, -2)];
+        let j = i + 1;
+        // Peek ahead for more citations separated only by optional whitespace
+        while (j < initialParts.length) {
+          const nextPart = initialParts[j];
+          if (nextPart === '' || nextPart.trim() === '') {
+            // If it's just whitespace, check the one AFTER it
+            if (j + 1 < initialParts.length && initialParts[j + 1].startsWith('{{') && initialParts[j + 1].endsWith('}}')) {
+              group.push(initialParts[j + 1].slice(2, -2));
+              j += 2;
+              continue;
+            }
+          } else if (nextPart.startsWith('{{') && nextPart.endsWith('}}')) {
+            group.push(nextPart.slice(2, -2));
+            j++;
+            continue;
+          }
+          break;
+        }
+        parts.push({ type: 'citation_group', ids: group });
+        i = j;
+      } else {
+        parts.push(part);
+        i++;
+      }
+    }
+
+    const openCitations = (ids: string[]) => {
+      setCurrentCitations(ids);
+      setShowCitationModal(true);
+    };
 
     return (
       <Text style={[styles.messageText, isUser && styles.userMessageText]}>
         {parts.map((part, index) => {
-          if (part.startsWith('**') && part.endsWith('**')) {
-            return <Text key={index} style={{ fontWeight: 'bold' }}>{part.slice(2, -2)}</Text>;
+          if (typeof part === 'string') {
+            if (part.startsWith('**') && part.endsWith('**')) {
+              return <Text key={index} style={{ fontWeight: 'bold' }}>{part.slice(2, -2)}</Text>;
+            }
+            return <Text key={index}>{part}</Text>;
           }
-          if (part.startsWith('{{') && part.endsWith('}}')) {
-            const memoryId = part.slice(2, -2);
+
+          if (part.type === 'citation_group') {
+            const ids = part.ids;
             return (
-              <Text
+              <TouchableOpacity
                 key={index}
-                style={[styles.citationLink, isUser && styles.userMessageText]}
-                onPress={() => router.push(`/memory/${memoryId}` as any)}
+                onPress={() => openCitations(ids)}
+                style={styles.citationBadgeWrapper}
               >
-                <Ionicons name="information-circle" size={16} color="#8b5cf6" style={{ marginLeft: 4 }} />
-              </Text>
+                <View style={styles.citationBadge}>
+                  <Ionicons name="information-circle" size={14} color="#8b5cf6" />
+                  {ids.length > 1 && <Text style={styles.citationCountText}>+{ids.length}</Text>}
+                </View>
+              </TouchableOpacity>
             );
           }
-          return <Text key={index}>{part}</Text>;
+          return null;
         })}
       </Text>
     );
@@ -502,6 +854,16 @@ export default function CopilotScreen() {
               isUser ? styles.userBubble : styles.assistantBubble,
             ]}
           >
+            {!isUser && (
+              <View style={styles.personaInsideHeader}>
+                <View style={[styles.avatarContainerSmall, { backgroundColor: persona?.color || '#8b5cf6' }]}>
+                  <Text style={styles.avatarEmojiSmall}>{persona?.emoji || '🤖'}</Text>
+                </View>
+                <Text style={[styles.personaNameHeader, { color: persona?.color || '#8b5cf6' }]}>
+                  {persona?.name || 'Copiloto'}
+                </Text>
+              </View>
+            )}
             {renderMessageTextWithCitations(rawContent, isUser)}
             <View style={styles.messageFooter}>
               <Text style={[styles.messageTime, isUser && styles.userMessageTime]}>
@@ -649,6 +1011,25 @@ export default function CopilotScreen() {
             );
           })}
         </ScrollView>
+      </View>
+    );
+  };
+
+  const renderWallpaper = () => {
+    const emojis = [];
+    // Super high density (approx 240 emojis for full screen coverage)
+    for (let i = 0; i < 240; i++) {
+      emojis.push(
+        <Text key={i} style={styles.wallpaperEmoji}>
+          {selectedPersona.emoji}
+        </Text>
+      );
+    }
+    return (
+      <View style={styles.wallpaperContainer} pointerEvents="none">
+        <View style={styles.wallpaperPattern}>
+          {emojis}
+        </View>
       </View>
     );
   };
@@ -808,15 +1189,143 @@ export default function CopilotScreen() {
     </Modal>
   );
 
+  const renderCitationModal = () => (
+    <Modal
+      key="citation-modal"
+      visible={showCitationModal}
+      transparent={true}
+      animationType="slide"
+      onRequestClose={() => setShowCitationModal(false)}
+    >
+      <TouchableOpacity
+        style={styles.modalOverlay}
+        activeOpacity={1}
+        onPress={() => setShowCitationModal(false)}
+      >
+        <View style={styles.citationModalContent}>
+          <View style={styles.citationModalHeader}>
+            <Text style={styles.citationModalTitle}>Referências Usadas</Text>
+            <TouchableOpacity onPress={() => setShowCitationModal(false)}>
+              <Ionicons name="close" size={24} color="#9ca3af" />
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={styles.citationList}>
+            {currentCitations.map((id, index) => {
+              const memory = memories.find(m => m.id === id);
+              return (
+                <TouchableOpacity
+                  key={index}
+                  style={styles.citationItem}
+                  onPress={() => {
+                    setShowCitationModal(false);
+                    // Use more robust navigation path
+                    router.push({ pathname: '/memory/[id]', params: { id } } as any);
+                  }}
+                >
+                  <View style={styles.citationItemLeft}>
+                    <View style={styles.citationIconSmall}>
+                      <Ionicons name="document-text" size={18} color="#8b5cf6" />
+                    </View>
+                    <View>
+                      <Text style={styles.citationItemTitle} numberOfLines={1}>
+                        {memory?.summary || `Memória ${id.substring(0, 8)}`}
+                      </Text>
+                      <Text style={styles.citationItemDate}>
+                        {memory?.createdAt ? new Date(memory.createdAt).toLocaleDateString('pt-BR') : 'Data desconhecida'}
+                      </Text>
+                    </View>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color="#4b5563" />
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      </TouchableOpacity>
+    </Modal>
+  );
+
+  const renderExpandedInput = () => (
+    <Modal
+      visible={isInputExpanded}
+      animationType="fade"
+      transparent={true}
+      onRequestClose={() => setIsInputExpanded(false)}
+    >
+      <View style={styles.expandedInputOverlay}>
+        <TouchableOpacity
+          style={styles.expandedInputBackdrop}
+          activeOpacity={1}
+          onPress={() => setIsInputExpanded(false)}
+        />
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.expandedInputKeyboardStore}
+        >
+          <View style={styles.expandedInputContent}>
+            <View style={styles.expandedInputHeader}>
+              <Text style={styles.expandedInputTitle}>Escrever Mensagem</Text>
+              <TouchableOpacity onPress={() => setIsInputExpanded(false)}>
+                <Ionicons name="close-circle" size={28} color="#ef4444" />
+              </TouchableOpacity>
+            </View>
+            <TextInput
+              style={styles.expandedInput}
+              value={inputText}
+              onChangeText={setInputText}
+              placeholder="Digite sua mensagem detalhada..."
+              placeholderTextColor="#6b7280"
+              multiline
+              autoFocus
+              maxLength={1000}
+            />
+            <View style={styles.expandedInputFooter}>
+              <Text style={styles.charCountText}>{inputText.length}/1000</Text>
+              <TouchableOpacity
+                style={styles.confirmExpandedBtn}
+                onPress={() => setIsInputExpanded(false)}
+              >
+                <Text style={styles.confirmExpandedBtnText}>Concluir</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
+  );
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <Animated.View style={[styles.content, { opacity: fadeAnim }]}>
-        {/* Header */}
         <View style={styles.header}>
-          <View style={styles.headerLeft}>
-            <Ionicons name="chatbubbles" size={24} color="#8b5cf6" />
-            <Text style={styles.headerTitle}>Copiloto</Text>
-          </View>
+          <TouchableOpacity
+            style={styles.headerLeft}
+            onPress={async () => {
+              const sessions = await localStorage.getChatSessions(true);
+              setChatSessions(sessions.filter((s: ChatSession) => !s.isArchived));
+              setShowHistoryModal(true);
+            }}
+          >
+            <View style={styles.headerTitleRow}>
+              <View style={styles.menuIconBadge}>
+                <Ionicons name="chatbox-ellipses" size={18} color="#fff" />
+                {chatSessions.length > 0 && (
+                  <View style={styles.headerNotificationBadge}>
+                    <Text style={styles.headerNotificationText}>{chatSessions.length}</Text>
+                  </View>
+                )}
+              </View>
+              <View>
+                <View style={styles.headerTopTitle}>
+                  <Text style={styles.headerTitle}>Copiloto</Text>
+                  <Ionicons name="chevron-forward" size={12} color="#6b7280" style={{ marginLeft: 4 }} />
+                </View>
+                <Text style={styles.headerSubtitle} numberOfLines={1}>
+                  {chatSessions.find(s => s.id === currentSessionId)?.title || 'Nova Conversa'}
+                </Text>
+              </View>
+            </View>
+          </TouchableOpacity>
 
           <View style={styles.headerRight}>
             {/* New Chat Button */}
@@ -825,21 +1334,6 @@ export default function CopilotScreen() {
               onPress={startNewChat}
             >
               <Ionicons name="add" size={22} color="#8b5cf6" />
-            </TouchableOpacity>
-
-            {/* History Button */}
-            <TouchableOpacity
-              style={styles.headerBtn}
-              onPress={() => setShowHistoryModal(true)}
-            >
-              <Ionicons name="menu" size={22} color="#8b5cf6" />
-              {chatSessions.length > 0 && (
-                <View style={styles.historyBadge}>
-                  <Text style={styles.historyBadgeText}>
-                    {chatSessions.length > 9 ? '9+' : chatSessions.length}
-                  </Text>
-                </View>
-              )}
             </TouchableOpacity>
 
             {/* Persona Button */}
@@ -866,6 +1360,9 @@ export default function CopilotScreen() {
           style={styles.chatContainer}
           keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
         >
+          {/* Persona Wallpaper Pattern */}
+          {renderWallpaper()}
+
           <ScrollView
             ref={scrollViewRef}
             style={styles.messagesContainer}
@@ -893,36 +1390,134 @@ export default function CopilotScreen() {
 
           {/* Input Area */}
           <View style={styles.inputContainer}>
-            <TextInput
-              style={styles.input}
-              value={inputText}
-              onChangeText={setInputText}
-              placeholder="Pergunte sobre suas memórias..."
-              placeholderTextColor="#6b7280"
-              multiline
-              maxLength={500}
-              editable={!isLoading}
-            />
-            <TouchableOpacity
-              style={[
-                styles.sendButton,
-                (!inputText.trim() || isLoading) && styles.sendButtonDisabled,
-              ]}
-              onPress={sendMessage}
-              disabled={!inputText.trim() || isLoading}
-            >
-              <Ionicons
-                name="send"
-                size={20}
-                color={(!inputText.trim() || isLoading) ? '#6b7280' : '#fff'}
-              />
-            </TouchableOpacity>
+            {isRecording ? (
+              <View style={styles.recordingStatusContainer}>
+                <View style={styles.recordingTimerContainer}>
+                  <View style={styles.recordingDot} />
+                  <Text style={styles.recordingTimeText}>{formatRecordingTime(recordingTime)}</Text>
+                </View>
+
+                {!isLocked ? (
+                  <View style={styles.slideCancelContainer}>
+                    <Ionicons name="chevron-back" size={16} color="#6b7280" />
+                    <Text style={styles.slideCancelText}>Deslize para cancelar</Text>
+                  </View>
+                ) : (
+                  <View style={styles.lockedControls}>
+                    <TouchableOpacity
+                      style={styles.cancelLink}
+                      onPress={() => stopRecordingChat(true)}
+                    >
+                      <Text style={styles.cancelLinkText}>Cancelar</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                <View style={[styles.recordingActions, isLocked && { marginRight: -12 }]}>
+                  {isLocked && (
+                    <View style={styles.lockedActionButtons}>
+                      <TouchableOpacity
+                        style={styles.pauseBtn}
+                        onPress={isPaused ? resumeRecordingChat : pauseRecordingChat}
+                      >
+                        <Ionicons name={isPaused ? "play" : "pause"} size={18} color="#fff" />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.lockedCheckBtn}
+                        onPress={() => stopRecordingChat(false)}
+                      >
+                        <Ionicons name="checkmark" size={24} color="#fff" />
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              </View>
+            ) : (
+              <View style={styles.inputWrapper}>
+                <TextInput
+                  ref={inputRef}
+                  style={styles.input}
+                  value={inputText}
+                  onChangeText={setInputText}
+                  placeholder="Pergunte sobre suas memórias..."
+                  placeholderTextColor="#6b7280"
+                  multiline
+                  maxLength={1000}
+                  editable={!isLoading}
+                />
+                <TouchableOpacity
+                  style={styles.expandTriggerDiscrete}
+                  onPress={() => setIsInputExpanded(true)}
+                >
+                  <Ionicons name="expand-outline" size={14} color="#9ca3af" />
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {!isLocked && (
+              inputText.trim().length === 0 ? (
+                <View
+                  style={styles.voiceButtonWrapper}
+                  {...panResponder.panHandlers}
+                >
+                  {!isLocked && isRecording && (
+                    <Animated.View style={[
+                      styles.lockIndicator,
+                      { transform: [{ translateY: panY }] }
+                    ]}>
+                      <Ionicons name="lock-closed" size={18} color="#8b5cf6" />
+                      <Ionicons name="chevron-up" size={14} color="#8b5cf6" />
+                    </Animated.View>
+                  )}
+
+                  <Animated.View
+                    pointerEvents="none"
+                    style={[
+                      styles.voiceButton,
+                      isRecording && styles.voiceButtonActive,
+                      {
+                        transform: [
+                          { scale: micScale },
+                          { translateY: panY },
+                          { translateX: panX }
+                        ]
+                      }
+                    ]}
+                  >
+                    <Ionicons
+                      name={isRecording ? "mic" : "mic-outline"}
+                      size={24}
+                      color={isRecording ? "#fff" : "#8b5cf6"}
+                    />
+                  </Animated.View>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  style={[
+                    styles.sendButton,
+                    (!inputText.trim() || isLoading) && styles.sendButtonDisabled,
+                  ]}
+                  onPress={sendMessage}
+                  disabled={!inputText.trim() || isLoading}
+                >
+                  <Ionicons
+                    name="send"
+                    size={20}
+                    color={(!inputText.trim() || isLoading) ? '#6b7280' : '#fff'}
+                  />
+                </TouchableOpacity>
+              )
+            )}
           </View>
         </KeyboardAvoidingView>
       </Animated.View>
 
       {/* History Modal */}
       {renderHistoryModal()}
+      {/* Citation Modal */}
+      {renderCitationModal()}
+      {/* Expanded Input Modal */}
+      {renderExpandedInput()}
     </SafeAreaView>
   );
 }
@@ -932,6 +1527,26 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#0a0a0f',
   },
+  wallpaperContainer: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: -1,
+    overflow: 'hidden',
+  },
+  wallpaperPattern: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    opacity: 0.5, // Reverted to 50% as requested
+    transform: [{ rotate: '-20deg' }, { scale: 1.8 }],
+    position: 'absolute',
+    top: -200,
+    left: -200,
+    width: '250%',
+    height: '250%',
+  },
+  wallpaperEmoji: {
+    fontSize: 28,
+    margin: 25,
+  },
   content: {
     flex: 1,
   },
@@ -939,20 +1554,65 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#1a1a24',
+    zIndex: 100,
   },
-  headerLeft: {
+  headerTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+  },
+  headerLeft: {
+    flex: 1,
   },
   headerTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: 'bold',
     color: '#fff',
+  },
+  headerTopTitle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  headerSubtitle: {
+    fontSize: 12,
+    color: '#9ca3af',
+    marginTop: 0,
+  },
+  menuIconBadge: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: '#8b5cf6', // Deep purple
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+    elevation: 4,
+    shadowColor: '#8b5cf6',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+  },
+  headerNotificationBadge: {
+    position: 'absolute',
+    top: -5,
+    right: -5,
+    backgroundColor: '#ef4444',
+    borderRadius: 10,
+    minWidth: 18,
+    height: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#12121a',
+    paddingHorizontal: 2,
+  },
+  headerNotificationText: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: 'bold',
   },
   headerRight: {
     flexDirection: 'row',
@@ -1001,10 +1661,20 @@ const styles = StyleSheet.create({
   },
   // Persona Selector Styles
   personaSelectorContainer: {
-    backgroundColor: '#12121a',
+    position: 'absolute',
+    top: 60, // Adjust based on header height
+    left: 0,
+    right: 0,
+    backgroundColor: '#161621',
     paddingVertical: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#1a1a24',
+    zIndex: 200,
+    elevation: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.5,
+    shadowRadius: 15,
   },
   personaSelectorHeader: {
     flexDirection: 'row',
@@ -1207,6 +1877,30 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 4,
     borderWidth: 1,
     borderColor: '#2d2d3a',
+    paddingTop: 8,
+  },
+  personaInsideHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    gap: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.05)',
+    paddingBottom: 6,
+  },
+  avatarContainerSmall: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarEmojiSmall: {
+    fontSize: 14,
+  },
+  personaNameHeader: {
+    fontSize: 12,
+    fontWeight: 'bold',
   },
   messageText: {
     fontSize: 15,
@@ -1265,25 +1959,100 @@ const styles = StyleSheet.create({
   // Input Styles
   inputContainer: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
+    alignItems: 'center', // Changed from flex-end for better recording bar alignment
     paddingHorizontal: 16,
     paddingVertical: 12,
     backgroundColor: '#12121a',
     borderTopWidth: 1,
     borderTopColor: '#1a1a24',
-    gap: 10,
+  },
+  inputWrapper: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1a1a24',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#2d2d3a',
+    marginRight: 10,
+    paddingRight: 8,
   },
   input: {
     flex: 1,
-    backgroundColor: '#1a1a24',
-    borderRadius: 20,
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingVertical: 12,
     fontSize: 15,
     color: '#fff',
-    maxHeight: 100,
+    maxHeight: 180,
+    minHeight: 46,
+  },
+  expandTriggerDiscrete: {
+    padding: 10,
+    opacity: 0.6,
+  },
+  // Expanded Input Styles
+  expandedInputOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  expandedInputBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+  },
+  expandedInputKeyboardStore: {
+    width: '100%',
+    height: '80%', // Occupies 80% as requested
+    backgroundColor: '#161621',
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    padding: 20,
+    elevation: 25,
+  },
+  expandedInputContent: {
+    flex: 1,
+  },
+  expandedInputHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  expandedInputTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  expandedInput: {
+    flex: 1,
+    backgroundColor: '#1a1a24',
+    borderRadius: 20,
+    padding: 20,
+    color: '#fff',
+    fontSize: 16,
+    textAlignVertical: 'top',
     borderWidth: 1,
-    borderColor: '#2d2d3a',
+    borderColor: '#3a3a4a',
+  },
+  expandedInputFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 15,
+  },
+  charCountText: {
+    color: '#6b7280',
+    fontSize: 12,
+  },
+  confirmExpandedBtn: {
+    backgroundColor: '#8b5cf6',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  confirmExpandedBtnText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 15,
   },
   sendButton: {
     width: 44,
@@ -1295,6 +2064,225 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: {
     backgroundColor: '#2d2d3a',
+  },
+  voiceButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(139, 92, 246, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(139, 92, 246, 0.3)',
+  },
+  voiceButtonActive: {
+    backgroundColor: '#ef4444',
+    borderColor: '#ef4444',
+    zIndex: 100,
+  },
+  voiceButtonWrapper: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+    width: 44,
+    height: 44,
+  },
+  lockIndicator: {
+    position: 'absolute',
+    top: -80,
+    alignItems: 'center',
+    backgroundColor: 'rgba(139, 92, 246, 0.1)',
+    padding: 8,
+    borderRadius: 20,
+    gap: 4,
+  },
+  recordingStatusContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    // Remove padding to allow buttons to hit the edge
+    paddingLeft: 0,
+    paddingRight: 0,
+  },
+  recordingTimerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  recordingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#ef4444',
+  },
+  recordingTimeText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  slideCancelContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  slideCancelText: {
+    color: '#6b7280',
+    fontSize: 14,
+  },
+  cancelButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  cancelButtonText: {
+    color: '#ef4444',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  recordingActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    // Negative margin to hit the screen padding edge if needed
+    marginRight: -4,
+  },
+  lockedActionButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  lockedSendBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#8b5cf6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  lockedControls: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelLink: {
+    padding: 8,
+  },
+  cancelLinkText: {
+    color: '#ef4444',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  pauseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  lockedCheckBtn: {
+    width: 56, // Increased from 48
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#10b981',
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 4,
+    shadowColor: '#10b981',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+  },
+  citationBadgeWrapper: {
+    marginHorizontal: 1,
+    alignSelf: 'center',
+    paddingVertical: 2,
+  },
+  citationBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(139, 92, 246, 0.1)', // Minimal background
+    borderRadius: 4,
+    paddingHorizontal: 2,
+    paddingLeft: 4, // More space before icon
+    gap: 1,
+  },
+  citationCountText: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    color: '#8b5cf6',
+  },
+  // Citation Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+    justifyContent: 'center', // Center for that "floating" look
+    alignItems: 'center',
+  },
+  citationModalContent: {
+    backgroundColor: '#1a1a24',
+    borderRadius: 20,
+    width: '85%',
+    padding: 20,
+    maxHeight: '50%',
+    borderWidth: 1,
+    borderColor: '#2d2d3a',
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.5,
+    shadowRadius: 15,
+  },
+  citationModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  citationModalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  citationList: {
+    marginBottom: 10,
+  },
+  citationItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#12121a',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#2d2d3a',
+  },
+  citationItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 12,
+  },
+  citationIconSmall: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: 'rgba(139, 92, 246, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  citationItemTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#e5e7eb',
+    marginBottom: 2,
+  },
+  citationItemDate: {
+    fontSize: 12,
+    color: '#6b7280',
   },
   // History Modal Styles
   historyModalOverlay: {
