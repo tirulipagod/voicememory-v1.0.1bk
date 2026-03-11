@@ -992,8 +992,9 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
             data={infiniteData}
             horizontal
             showsHorizontalScrollIndicator={false}
+            pagingEnabled={true}
             snapToInterval={ITEM_WIDTH}
-            snapToAlignment="start"
+            snapToAlignment="center"
             decelerationRate="fast"
             onMomentumScrollEnd={onMomentumScrollEnd}
             scrollEventThrottle={16}
