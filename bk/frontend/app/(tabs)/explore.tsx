@@ -767,7 +767,6 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
   const onMomentumScrollEnd = (event: any) => {
     const x = event.nativeEvent.contentOffset.x;
 
-    // CORRECTION 2 (Atrito and Math constraint for true center index calculations)
     // Absolute pure math mapping index without gaps
     const index = Math.round(x / ITEM_WIDTH);
 
@@ -775,13 +774,6 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
       currentInfiniteIndex.current = index;
       setSelected(infiniteData[index]);
     }
-
-    // Force strict exact pixel lock via hardware interpolation in case swipe fell short
-    carouselRef.current?.scrollToIndex({
-      index: currentInfiniteIndex.current,
-      animated: true,
-      viewPosition: 0.5
-    });
   };
 
   let offset = 0;
@@ -1000,7 +992,6 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
             data={infiniteData}
             horizontal
             showsHorizontalScrollIndicator={false}
-            pagingEnabled={true}
             snapToInterval={ITEM_WIDTH}
             snapToAlignment="start"
             decelerationRate="fast"
