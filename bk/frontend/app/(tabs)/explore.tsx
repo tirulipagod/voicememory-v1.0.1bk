@@ -477,37 +477,25 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
   const lastPressTime = useRef(0);
 
   useEffect(() => {
-    // Persistent slow pulse for active segment
+    // Persistent pulse for active segment
     Animated.loop(
       Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.1, duration: 1500, useNativeDriver: true, easing: Easing.inOut(Easing.sin) }),
-        Animated.timing(pulseAnim, { toValue: 1, duration: 1500, useNativeDriver: true, easing: Easing.inOut(Easing.sin) }),
-      ])
-    ).start();
-  }, []);
-
-  useEffect(() => {
-    // Persistent subtle pulse for active segment
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.05, duration: 1500, useNativeDriver: true, easing: Easing.inOut(Easing.sin) }),
+        Animated.timing(pulseAnim, { toValue: 1.08, duration: 1500, useNativeDriver: true, easing: Easing.inOut(Easing.sin) }),
         Animated.timing(pulseAnim, { toValue: 1, duration: 1500, useNativeDriver: true, easing: Easing.inOut(Easing.sin) }),
       ])
     ).start();
   }, []);
 
   // High Precision Layout
-  const CONTAINER_WIDTH = width - 40;
-  const ARROW_BUTTON_WIDTH = 40;
-  const VIEWPORT_WIDTH = Math.floor(CONTAINER_WIDTH - (ARROW_BUTTON_WIDTH * 2) - 10);
+  const VIEWPORT_WIDTH = Math.floor(width * 0.72);
   const ITEM_WIDTH = VIEWPORT_WIDTH;
 
   useEffect(() => {
-    // Parallel Orbits - Slower and more elegant
+    // Parallel Orbits - Faster for more energy
     Animated.loop(
       Animated.timing(orbitAnim, {
         toValue: 1,
-        duration: 15000,
+        duration: 10000,
         easing: Easing.linear,
         useNativeDriver: true,
       })
@@ -516,7 +504,7 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
     Animated.loop(
       Animated.timing(counterOrbitAnim, {
         toValue: 1,
-        duration: 20000,
+        duration: 14000,
         easing: Easing.linear,
         useNativeDriver: true,
       })
@@ -587,16 +575,16 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
         if (A <= 0) {
           const wrappedA = 360 + A;
           inputRange = [0, B, B + 0.001, wrappedA - 0.001, wrappedA, 360];
-          opacityOutputRange = [1, 1, 0.55, 0.55, 1, 1];
+          opacityOutputRange = [0, 0, 0.55, 0.55, 0, 0];
           activeOutputRange = [1, 1, 0, 0, 1, 1];
         } else if (B >= 360) {
           const wrappedB = B - 360;
           inputRange = [0, wrappedB, wrappedB + 0.001, A - 0.001, A, 360];
-          opacityOutputRange = [1, 1, 0.55, 0.55, 1, 1];
+          opacityOutputRange = [0, 0, 0.55, 0.55, 0, 0];
           activeOutputRange = [1, 1, 0, 0, 1, 1];
         } else {
           inputRange = [0, A - 0.001, A, B, B + 0.001, 360];
-          opacityOutputRange = [0.55, 0.55, 1, 1, 0.55, 0.55];
+          opacityOutputRange = [0.55, 0.55, 0, 0, 0.55, 0.55];
           activeOutputRange = [0, 0, 1, 1, 0, 0];
         }
 
@@ -820,7 +808,8 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
     }
   };
 
-  let offset = 0;
+  let offsetBase = 0;
+  let offsetActive = 0;
   const orbitRotate = orbitAnim.interpolate({
     inputRange: [0, 1],
     outputRange: ['0deg', '360deg'],
@@ -854,6 +843,7 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
             backgroundColor: 'transparent'
           }}
         >
+          {/* LAYER 1: STABLE (Inactive Segments + Hit Areas) */}
           <Svg
             width={drawSize}
             height={drawSize}
@@ -865,8 +855,8 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
                 const dash = (item.percentage / 100) * circumference;
                 const gap = circumference - dash;
                 const strokeDasharray = `${dash} ${gap}`;
-                const currentOffset = circumference - offset;
-                offset += dash;
+                const currentOffset = circumference - offsetBase;
+                offsetBase += dash;
 
                 const animatedOpacity = normalizedWheel.interpolate({
                   inputRange: item.inputRange,
@@ -874,18 +864,9 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
                   extrapolate: 'clamp'
                 });
 
-                const animatedActive = normalizedWheel.interpolate({
-                  inputRange: item.inputRange,
-                  outputRange: item.activeOutputRange,
-                  extrapolate: 'clamp'
-                });
-
                 return (
-                  <G
-                    key={index}
-                    onPress={() => handleSegmentPress(item, index)}
-                  >
-                    {/* Standard Visual Segment (Inactive Overlay based on opacity) */}
+                  <G key={`stable-${index}`}>
+                    {/* Inactive Segment Overlay */}
                     <AnimatedG opacity={animatedOpacity}>
                       <Circle
                         cx={center}
@@ -896,16 +877,53 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
                         strokeDasharray={strokeDasharray}
                         strokeDashoffset={currentOffset}
                         fill="none"
-                        onPress={() => handleSegmentPress(item, index)}
                       />
                     </AnimatedG>
 
-                    {/* Active Layer with Pulse - strictly applied to the selected item via G props */}
-                    <AnimatedG
-                      opacity={animatedActive}
-                      scale={pulseAnim}
-                      origin={`${center}, ${center}`}
-                    >
+                    {/* hit box always on top but invisible */}
+                    <Circle
+                      cx={center}
+                      cy={center}
+                      r={radius}
+                      stroke="rgba(255,255,255,0.01)"
+                      strokeWidth={strokeWidth + 40}
+                      strokeDasharray={strokeDasharray}
+                      strokeDashoffset={currentOffset}
+                      fill="none"
+                      onPress={() => handleSegmentPress(item, index)}
+                    />
+                  </G>
+                );
+              })}
+            </G>
+          </Svg>
+
+          {/* LAYER 2: PULSING (Only active segment) */}
+          <Animated.View
+            style={[StyleSheet.absoluteFill, { transform: [{ scale: pulseAnim }], alignItems: 'center', justifyContent: 'center' }]}
+            pointerEvents="none"
+          >
+            <Svg
+              width={drawSize}
+              height={drawSize}
+              viewBox={`0 0 ${drawSize} ${drawSize}`}
+            >
+              <G rotation="-90" origin={`${center}, ${center}`}>
+                {donutData.map((item, index) => {
+                  const dash = (item.percentage / 100) * circumference;
+                  const gap = circumference - dash;
+                  const strokeDasharray = `${dash} ${gap}`;
+                  const currentOffset = circumference - offsetActive;
+                  offsetActive += dash;
+
+                  const animatedActive = normalizedWheel.interpolate({
+                    inputRange: item.inputRange,
+                    outputRange: item.activeOutputRange,
+                    extrapolate: 'clamp'
+                  });
+
+                  return (
+                    <AnimatedG key={`active-${index}`} opacity={animatedActive}>
                       {/* Glow Behind */}
                       <Circle
                         cx={center}
@@ -930,85 +948,73 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
                         fill="none"
                       />
                     </AnimatedG>
+                  );
+                })}
+              </G>
+            </Svg>
+          </Animated.View>
 
-                    {/* Dedicated Hit Area (Invisible but large) */}
-                    <Circle
-                      cx={center}
-                      cy={center}
-                      r={radius}
-                      stroke="rgba(255,255,255,0.01)"
-                      strokeWidth={strokeWidth + 40}
-                      strokeDasharray={strokeDasharray}
-                      strokeDashoffset={currentOffset}
-                      fill="none"
-                      onPress={() => handleSegmentPress(item, index)}
-                    />
-                  </G>
-                );
-              })}
-            </G>
+        </Animated.View>
+
+        {/* HUD LAYERS: Parallel rotation, now independent of the wheel manual drag */}
+        <Animated.View style={{
+          position: 'absolute',
+          width: drawSize,
+          height: drawSize,
+          transform: [{ rotate: orbitRotate }]
+        }} pointerEvents="none">
+          <Svg width={drawSize} height={drawSize} viewBox={`0 0 ${drawSize} ${drawSize}`}>
+            <Circle
+              cx={drawSize / 2}
+              cy={drawSize / 2}
+              r={radius + 44}
+              stroke="#a78bfa"
+              strokeWidth={2}
+              strokeDasharray="20 180"
+              fill="none"
+              opacity={0.6}
+            />
+            <Circle
+              cx={drawSize / 2}
+              cy={drawSize / 2}
+              r={radius + 44}
+              stroke="#ffffff"
+              strokeWidth={1}
+              strokeDasharray="2 18"
+              fill="none"
+              opacity={0.4}
+            />
           </Svg>
+        </Animated.View>
 
-          <Animated.View style={{
-            position: 'absolute',
-            width: drawSize,
-            height: drawSize,
-            transform: [{ rotate: orbitRotate }]
-          }} pointerEvents="none">
-            <Svg width={drawSize} height={drawSize} viewBox={`0 0 ${drawSize} ${drawSize}`}>
-              <Circle
-                cx={drawSize / 2}
-                cy={drawSize / 2}
-                r={radius + 32}
-                stroke="#a78bfa"
-                strokeWidth={2}
-                strokeDasharray="20 180"
-                fill="none"
-                opacity={0.6}
-              />
-              <Circle
-                cx={drawSize / 2}
-                cy={drawSize / 2}
-                r={radius + 32}
-                stroke="#ffffff"
-                strokeWidth={1}
-                strokeDasharray="2 18"
-                fill="none"
-                opacity={0.4}
-              />
-            </Svg>
-          </Animated.View>
-
-          <Animated.View style={{
-            position: 'absolute',
-            width: drawSize,
-            height: drawSize,
-            transform: [{ rotate: counterRotate }]
-          }} pointerEvents="none">
-            <Svg width={drawSize} height={drawSize} viewBox={`0 0 ${drawSize} ${drawSize}`}>
-              <Circle
-                cx={drawSize / 2}
-                cy={drawSize / 2}
-                r={radius - 30}
-                stroke="#ffffff"
-                strokeWidth={1}
-                strokeDasharray="40 160"
-                fill="none"
-                opacity={0.3}
-              />
-              {/* Small "Pulse" Scanner line */}
-              <Circle
-                cx={drawSize / 2}
-                cy={drawSize / 2}
-                r={radius - 30}
-                stroke="#ffffff"
-                strokeWidth={3}
-                strokeDasharray="2 198"
-                fill="none"
-                opacity={0.8}
-              />
-            </Svg>
-          </Animated.View>
+        <Animated.View style={{
+          position: 'absolute',
+          width: drawSize,
+          height: drawSize,
+          transform: [{ rotate: counterRotate }]
+        }} pointerEvents="none">
+          <Svg width={drawSize} height={drawSize} viewBox={`0 0 ${drawSize} ${drawSize}`}>
+            <Circle
+              cx={drawSize / 2}
+              cy={drawSize / 2}
+              r={radius - 30}
+              stroke="#ffffff"
+              strokeWidth={1}
+              strokeDasharray="40 160"
+              fill="none"
+              opacity={0.3}
+            />
+            <Circle
+              cx={drawSize / 2}
+              cy={drawSize / 2}
+              r={radius - 30}
+              stroke="#ffffff"
+              strokeWidth={3}
+              strokeDasharray="2 198"
+              fill="none"
+              opacity={0.8}
+            />
+          </Svg>
         </Animated.View>
 
         {/* Info Central Double Click Re-center */}
@@ -1048,33 +1054,36 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
           <Ionicons name="chevron-back" size={24} color="#a78bfa" />
         </TouchableOpacity>
 
-        <View style={{ width: VIEWPORT_WIDTH, height: 60, overflow: 'hidden' }}>
+        <View style={[donutStyles.legendContainer, { width: VIEWPORT_WIDTH }]}>
           <FlatList
             ref={carouselRef}
             data={infiniteData}
             horizontal
             showsHorizontalScrollIndicator={false}
-            snapToOffsets={snapOffsets}
+            keyExtractor={(_, i) => `infinite-${i}`}
+            snapToInterval={ITEM_WIDTH}
             disableIntervalMomentum={true}
-            snapToAlignment="start"
+            pagingEnabled={false}
             decelerationRate="fast"
-            onMomentumScrollEnd={onMomentumScrollEnd}
-            scrollEventThrottle={16}
-            getItemLayout={(data, index) => ({
+            snapToAlignment="center"
+            getItemLayout={(_, index) => ({
               length: ITEM_WIDTH,
               offset: ITEM_WIDTH * index,
               index,
             })}
-            keyExtractor={(_, index) => `item-${index}`}
-            contentContainerStyle={{
-              alignItems: 'center',
+            onScrollToIndexFailed={(info) => {
+              const wait = new Promise(resolve => setTimeout(resolve, 500));
+              wait.then(() => {
+                carouselRef.current?.scrollToIndex({ index: info.index, animated: false, viewPosition: 0.5 });
+              });
             }}
+            onMomentumScrollEnd={onMomentumScrollEnd}
             renderItem={({ item, index }) => (
               <View style={{ width: ITEM_WIDTH, alignItems: 'center', justifyContent: 'center' }}>
                 <TouchableOpacity
                   style={[
                     donutStyles.legendItem,
-                    { width: ITEM_WIDTH - 16 },
+                    { width: ITEM_WIDTH - 20 },
                     selected?.label === item.label && donutStyles.legendItemActive
                   ]}
                   onPress={() => {
@@ -1113,7 +1122,7 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
           <Ionicons name="chevron-forward" size={24} color="#a78bfa" />
         </TouchableOpacity>
       </View>
-    </View >
+    </View>
   );
 };
 
@@ -1149,8 +1158,9 @@ const donutStyles = StyleSheet.create({
     color: '#9ca3af',
   },
   legendContainer: {
-    flexDirection: 'row',
+    height: 50,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   carouselControlContainer: {
     flexDirection: 'row',
@@ -1158,15 +1168,16 @@ const donutStyles = StyleSheet.create({
     justifyContent: 'center',
     width: '100%',
     marginTop: 20,
-    gap: 10,
+    gap: 12,
   },
   indicatorContainer: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: 'rgba(139, 92, 246, 0.1)',
     alignItems: 'center',
     justifyContent: 'center',
+    zIndex: 1,
   },
   legendItem: {
     flexDirection: 'row',
