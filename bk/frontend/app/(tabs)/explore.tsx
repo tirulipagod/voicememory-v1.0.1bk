@@ -844,7 +844,7 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
           {...panResponder.panHandlers}
           style={{
             transform: [
-              { scale: Animated.multiply(scaleAnim, pulseAnim) },
+              { scale: scaleAnim },
               { rotate: wheelRot }
             ],
             width: drawSize,
@@ -900,8 +900,12 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
                       />
                     </AnimatedG>
 
-                    {/* Active Layer with Pulse synced with Parent View */}
-                    <AnimatedG opacity={animatedActive}>
+                    {/* Active Layer with Pulse - strictly applied to the selected item via G props */}
+                    <AnimatedG
+                      opacity={animatedActive}
+                      scale={pulseAnim}
+                      origin={`${center}, ${center}`}
+                    >
                       {/* Glow Behind */}
                       <Circle
                         cx={center}
