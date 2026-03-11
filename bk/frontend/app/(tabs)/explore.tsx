@@ -486,6 +486,16 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
     ).start();
   }, []);
 
+  useEffect(() => {
+    // Persistent subtle pulse for active segment
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.05, duration: 1500, useNativeDriver: true, easing: Easing.inOut(Easing.sin) }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 1500, useNativeDriver: true, easing: Easing.inOut(Easing.sin) }),
+      ])
+    ).start();
+  }, []);
+
   // High Precision Layout
   const CONTAINER_WIDTH = width - 40;
   const ARROW_BUTTON_WIDTH = 40;
@@ -514,8 +524,8 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
   }, []);
 
   const drawSize = size + 120;
-  const strokeWidth = 42;
-  const radius = (size - 30) / 2;
+  const strokeWidth = 38;
+  const radius = (size - 32) / 2;
   const center = drawSize / 2;
   const circumference = 2 * Math.PI * radius;
 
@@ -834,7 +844,7 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
           {...panResponder.panHandlers}
           style={{
             transform: [
-              { scale: scaleAnim },
+              { scale: Animated.multiply(scaleAnim, pulseAnim) },
               { rotate: wheelRot }
             ],
             width: drawSize,
@@ -875,26 +885,7 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
                     key={index}
                     onPress={() => handleSegmentPress(item, index)}
                   >
-                    {/* Shadow/Glow via Native Interpolation (Pulsing) */}
-                    <AnimatedG
-                      opacity={animatedActive}
-                      style={{ transform: [{ scale: pulseAnim }] }}
-                    >
-                      <Circle
-                        cx={center}
-                        cy={center}
-                        r={radius}
-                        stroke={item.color}
-                        strokeWidth={strokeWidth + 24}
-                        strokeDasharray={strokeDasharray}
-                        strokeDashoffset={currentOffset}
-                        fill="none"
-                        opacity={0.4}
-                        onPress={() => handleSegmentPress(item, index)}
-                      />
-                    </AnimatedG>
-
-                    {/* Visual Segment via Native Interpolation */}
+                    {/* Standard Visual Segment (Inactive Overlay based on opacity) */}
                     <AnimatedG opacity={animatedOpacity}>
                       <Circle
                         cx={center}
@@ -906,6 +897,33 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
                         strokeDashoffset={currentOffset}
                         fill="none"
                         onPress={() => handleSegmentPress(item, index)}
+                      />
+                    </AnimatedG>
+
+                    {/* Active Layer with Pulse synced with Parent View */}
+                    <AnimatedG opacity={animatedActive}>
+                      {/* Glow Behind */}
+                      <Circle
+                        cx={center}
+                        cy={center}
+                        r={radius}
+                        stroke={item.color}
+                        strokeWidth={strokeWidth + 12}
+                        strokeDasharray={strokeDasharray}
+                        strokeDashoffset={currentOffset}
+                        fill="none"
+                        opacity={0.2}
+                      />
+                      {/* Main Active Segment */}
+                      <Circle
+                        cx={center}
+                        cy={center}
+                        r={radius}
+                        stroke={item.color}
+                        strokeWidth={strokeWidth}
+                        strokeDasharray={strokeDasharray}
+                        strokeDashoffset={currentOffset}
+                        fill="none"
                       />
                     </AnimatedG>
 
@@ -937,7 +955,7 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
               <Circle
                 cx={drawSize / 2}
                 cy={drawSize / 2}
-                r={radius + 36}
+                r={radius + 32}
                 stroke="#a78bfa"
                 strokeWidth={2}
                 strokeDasharray="20 180"
@@ -947,7 +965,7 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
               <Circle
                 cx={drawSize / 2}
                 cy={drawSize / 2}
-                r={radius + 36}
+                r={radius + 32}
                 stroke="#ffffff"
                 strokeWidth={1}
                 strokeDasharray="2 18"
@@ -967,7 +985,7 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
               <Circle
                 cx={drawSize / 2}
                 cy={drawSize / 2}
-                r={radius - 24}
+                r={radius - 30}
                 stroke="#ffffff"
                 strokeWidth={1}
                 strokeDasharray="40 160"
@@ -978,7 +996,7 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
               <Circle
                 cx={drawSize / 2}
                 cy={drawSize / 2}
-                r={radius - 24}
+                r={radius - 30}
                 stroke="#ffffff"
                 strokeWidth={3}
                 strokeDasharray="2 198"
