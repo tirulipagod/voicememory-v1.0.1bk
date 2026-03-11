@@ -473,6 +473,7 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
   const orbitAnim = useRef(new Animated.Value(0)).current;
   const counterOrbitAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(1)).current;
+  const lastPressTime = useRef(0);
 
   // High Precision Layout
   const CONTAINER_WIDTH = width - 40;
@@ -665,10 +666,15 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
         isDragging.current = true;
         wheelAnim.stopAnimation();
         wheelAnim.extractOffset();
+
+        // Cache native attributes synchronously before measure async pool clear corrupts event
+        const grantPageX = e.nativeEvent.pageX;
+        const grantPageY = e.nativeEvent.pageY;
+
         donutRef.current?.measure((x, y, w, h, px, py) => {
           if (w > 0 && h > 0) {
             centerCoord.current = { x: px + w / 2, y: py + h / 2 };
-            startAngle.current = Math.atan2(e.nativeEvent.pageY - centerCoord.current.y, e.nativeEvent.pageX - centerCoord.current.x) * (180 / Math.PI);
+            startAngle.current = Math.atan2(grantPageY - centerCoord.current.y, grantPageX - centerCoord.current.x) * (180 / Math.PI);
           }
         });
       },
@@ -765,6 +771,20 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
       animated: true,
       viewPosition: 0.5
     });
+  };
+
+  const handleCenterPress = () => {
+    const now = Date.now();
+    if (now - lastPressTime.current < 400) {
+      if (!data || data.length === 0) return;
+      // Get predominant emotion (highest count)
+      const dominant = [...data].sort((a, b) => b.count - a.count)[0];
+      if (dominant && dominant.label !== selectedRef.current?.label) {
+        const idx = data.findIndex(d => d.label === dominant.label);
+        if (idx !== -1) handleSegmentPress(dominant, idx);
+      }
+    }
+    lastPressTime.current = now;
   };
 
   const onMomentumScrollEnd = (event: any) => {
@@ -955,12 +975,15 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
           </Animated.View>
         </Animated.View>
 
-        {/* Info Central */}
-        <View style={donutStyles.centerContent} pointerEvents="none">
+        {/* Info Central Double Click Re-center */}
+        <Pressable
+          style={donutStyles.centerContent}
+          onPress={handleCenterPress}
+        >
           <Text style={donutStyles.centerEmoji}>{current?.emoji || '😐'}</Text>
           <Text style={donutStyles.centerLabel}>{current?.label || '-'}</Text>
           <Text style={donutStyles.centerPercent}>{Math.round(current?.percentage || 0)}%</Text>
-        </View>
+        </Pressable>
       </View>
 
       {/* Info de Total */}
@@ -1706,7 +1729,12 @@ export default function ExploreScreen() {
       const translatedEmotion = translateEmotion(m.emotion);
 
       if (!emotionMap[translatedEmotion]) {
-        emotionMap[translatedEmotion] = { count: 0, emoji: m.emotionEmoji, moods: [], memories: [] };
+        emotionMap[translatedEmotion] = {
+          count: 0,
+          emoji: getSafeEmoji(m.emotionEmoji, m.emotion),
+          moods: [],
+          memories: []
+        };
       }
       emotionMap[translatedEmotion].count++;
       emotionMap[translatedEmotion].moods.push(m.moodScore);
