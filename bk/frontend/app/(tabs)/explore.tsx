@@ -21,11 +21,91 @@ import { useAuth } from '../../src/contexts/AuthContext';
 import { localStorage, LocalMemory } from '../../src/services/LocalStorage';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback } from 'react';
-import Svg, { Polygon, Line, Circle, Text as SvgText, G, Rect } from 'react-native-svg';
+import Svg, { Polygon, Line, Circle, Text as SvgText, G, Rect, Path, Defs, LinearGradient, Stop } from 'react-native-svg';
 
 const AnimatedG = Animated.createAnimatedComponent(G);
+const AnimatedPath = Animated.createAnimatedComponent(Path);
 
 const { width } = Dimensions.get('window');
+
+// Fast-Forward Style Cascading Chevron Arrow
+const FastForwardArrow = ({ direction = 'right' }: { direction?: 'left' | 'right' }) => {
+  const pulseAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 1500,
+          easing: Easing.linear,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 0,
+          duration: 0,
+          useNativeDriver: true,
+        })
+      ])
+    ).start();
+  }, []);
+
+  const getOpacity = (index: number) => {
+    const start = index * 0.2;
+    const end = start + 0.5;
+    return pulseAnim.interpolate({
+      inputRange: [0, start, start + 0.1, end - 0.1, end, 1],
+      outputRange: [0.2, 0.2, 1, 1, 0.2, 0.2],
+      extrapolate: 'clamp'
+    });
+  };
+
+  const chevronPath = "M2 2L10 10L2 18";
+  const rotation = direction === 'left' ? '180deg' : '0deg';
+
+  return (
+    <View style={{ width: 32, height: 24, justifyContent: 'center', alignItems: 'center', transform: [{ rotate: rotation }] }}>
+      <Svg width="24" height="20" viewBox="0 0 24 20">
+        <Defs>
+          <LinearGradient id="arrowGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+            <Stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.3" />
+            <Stop offset="50%" stopColor="#a78bfa" stopOpacity="0.7" />
+            <Stop offset="100%" stopColor="#c4b5fd" stopOpacity="1" />
+          </LinearGradient>
+        </Defs>
+        <AnimatedPath
+          d={chevronPath}
+          stroke="url(#arrowGradient)"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          fill="none"
+          opacity={getOpacity(0)}
+        />
+        <AnimatedPath
+          d={chevronPath}
+          stroke="url(#arrowGradient)"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          fill="none"
+          opacity={getOpacity(1)}
+          transform="translate(6, 0)"
+        />
+        <AnimatedPath
+          d={chevronPath}
+          stroke="url(#arrowGradient)"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          fill="none"
+          opacity={getOpacity(2)}
+          transform="translate(12, 0)"
+        />
+      </Svg>
+    </View>
+  );
+};
 
 // ========== FUNÇÃO STREAK (Contador de Dias Seguidos) ==========
 const calculateStreak = (memories: LocalMemory[]): number => {
@@ -705,24 +785,50 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
           // Visual cascata is 100% UI thread interpolation on wheelAnim internally.
         }
       },
-      onPanResponderRelease: () => {
+      onPanResponderRelease: (e, gestureState) => {
         wheelAnim.flattenOffset();
         const rot = currentRot.current;
+
+        // If it's a very small movement, consider it a TAP
+        const isTap = Math.abs(gestureState.dx) < 5 && Math.abs(gestureState.dy) < 5;
 
         // CORRECTION 1: Smooth 0-360 normalization for JS state mapping, reversed for correct direction
         let normalizedRot = (-rot) % 360;
         if (normalizedRot < 0) normalizedRot += 360;
 
-        // Determine standard block placement for snappiness robustly via minimum distance
         let currentIndex = 0;
         let minDiff = Infinity;
-        for (let i = 0; i < donutData.length; i++) {
-          const item = donutData[i];
-          let diff = Math.abs(item.centerAngle - normalizedRot);
-          if (diff > 180) diff = 360 - diff;
-          if (diff < minDiff) {
-            minDiff = diff;
-            currentIndex = i;
+
+        if (isTap && centerCoord.current.x !== 0) {
+          // Direct tap logic using polar coordinates
+          const { pageX, pageY } = e.nativeEvent;
+          const touchAngle = Math.atan2(pageY - centerCoord.current.y, pageX - centerCoord.current.x) * (180 / Math.PI);
+
+          // Normalized touch angle to 0-360 range
+          let normalizedTouchAngle = touchAngle + 90; // Svg rotation starts at -90deg
+          normalizedTouchAngle = (normalizedTouchAngle - (rot % 360)) % 360;
+          if (normalizedTouchAngle < 0) normalizedTouchAngle += 360;
+
+          // Find the segment containing this angle
+          let currentAngle = 0;
+          for (let i = 0; i < donutData.length; i++) {
+            const sweep = donutData[i].percentage / 100 * 360;
+            if (normalizedTouchAngle >= currentAngle && normalizedTouchAngle < currentAngle + sweep) {
+              currentIndex = i;
+              break;
+            }
+            currentAngle += sweep;
+          }
+        } else {
+          // Normal drag snapping logic
+          for (let i = 0; i < donutData.length; i++) {
+            const item = donutData[i];
+            let diff = Math.abs(item.centerAngle - normalizedRot);
+            if (diff > 180) diff = 360 - diff;
+            if (diff < minDiff) {
+              minDiff = diff;
+              currentIndex = i;
+            }
           }
         }
 
@@ -1051,7 +1157,7 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
             }
           }}
         >
-          <Ionicons name="chevron-back" size={24} color="#a78bfa" />
+          <FastForwardArrow direction="left" />
         </TouchableOpacity>
 
         <View style={[donutStyles.legendContainer, { width: VIEWPORT_WIDTH }]}>
@@ -1119,7 +1225,7 @@ const EmotionDonutChart: React.FC<DonutChartProps> = ({ data, size = 110, onPres
             }
           }}
         >
-          <Ionicons name="chevron-forward" size={24} color="#a78bfa" />
+          <FastForwardArrow direction="right" />
         </TouchableOpacity>
       </View>
     </View>
@@ -1167,14 +1273,12 @@ const donutStyles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     width: '100%',
-    marginTop: 20,
-    gap: 12,
+    marginTop: 10,
+    gap: 0,
   },
   indicatorContainer: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(139, 92, 246, 0.1)',
+    width: 32,
+    height: 32,
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 1,
