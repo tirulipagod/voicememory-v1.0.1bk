@@ -36,6 +36,10 @@ export default function ConnectionsScreen() {
     const [copilotSummary, setCopilotSummary] = useState<string>('');
     const [isLoadingCopilot, setIsLoadingCopilot] = useState(false);
 
+    // Bug 4: Essence audio player state
+    const [isPlayingEssence, setIsPlayingEssence] = useState(false);
+    const soundRef = useRef<Audio.Sound | null>(null);
+
     useEffect(() => {
         loadConnections();
     }, []);
@@ -161,6 +165,41 @@ export default function ConnectionsScreen() {
         setConnectionMemories([]);
         setCopilotSummary('');
         setIsLoadingCopilot(false);
+        // Stop any playing essence audio
+        if (soundRef.current) {
+            soundRef.current.stopAsync().catch(() => { });
+            soundRef.current.unloadAsync().catch(() => { });
+            soundRef.current = null;
+        }
+        setIsPlayingEssence(false);
+    };
+
+    const toggleEssencePlayback = async (uri: string) => {
+        if (isPlayingEssence && soundRef.current) {
+            await soundRef.current.stopAsync();
+            await soundRef.current.unloadAsync();
+            soundRef.current = null;
+            setIsPlayingEssence(false);
+            return;
+        }
+        try {
+            await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
+            const { sound } = await Audio.Sound.createAsync(
+                { uri },
+                { shouldPlay: true },
+                (status) => {
+                    if (status.isLoaded && status.didJustFinish) {
+                        setIsPlayingEssence(false);
+                        soundRef.current = null;
+                    }
+                }
+            );
+            soundRef.current = sound;
+            setIsPlayingEssence(true);
+        } catch (e) {
+            console.log('Failed to play essence:', e);
+            setIsPlayingEssence(false);
+        }
     };
 
     const resetAddModal = () => {
@@ -311,10 +350,38 @@ export default function ConnectionsScreen() {
                                             ) : (
                                                 <Ionicons name="person" size={40} color="#a78bfa" />
                                             )}
+                                            {/* Essence play badge */}
+                                            {selectedConnection.signatureMemoryId && (
+                                                <TouchableOpacity
+                                                    style={styles.essencePlayBadge}
+                                                    onPress={() => toggleEssencePlayback(selectedConnection.signatureMemoryId!)}
+                                                >
+                                                    <Ionicons
+                                                        name={isPlayingEssence ? 'stop' : 'play'}
+                                                        size={12}
+                                                        color="#fff"
+                                                    />
+                                                </TouchableOpacity>
+                                            )}
                                         </View>
                                         <View style={styles.detailsTitleContainer}>
                                             <Text style={styles.detailsName}>{selectedConnection.name}</Text>
                                             <Text style={styles.detailsRelationship}>{selectedConnection.relationship}</Text>
+                                            {selectedConnection.signatureMemoryId && (
+                                                <TouchableOpacity
+                                                    style={styles.essenceLabel}
+                                                    onPress={() => toggleEssencePlayback(selectedConnection.signatureMemoryId!)}
+                                                >
+                                                    <Ionicons
+                                                        name={isPlayingEssence ? 'stop-circle-outline' : 'play-circle-outline'}
+                                                        size={14}
+                                                        color="#a78bfa"
+                                                    />
+                                                    <Text style={styles.essenceLabelText}>
+                                                        {isPlayingEssence ? 'Parar essência' : 'Ouvir essência'}
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            )}
                                         </View>
                                         <TouchableOpacity style={styles.detailsCloseBtn} onPress={closeNodeDetails}>
                                             <Ionicons name="close-circle-outline" size={28} color="#6b7280" />
@@ -573,11 +640,24 @@ const styles = StyleSheet.create({
         alignItems: 'center', justifyContent: 'center',
         borderWidth: 1, borderColor: 'rgba(167, 139, 250, 0.3)',
         overflow: 'hidden',
+        position: 'relative',
+    },
+    essencePlayBadge: {
+        position: 'absolute', bottom: 0, right: 0,
+        width: 22, height: 22, borderRadius: 11,
+        backgroundColor: '#8b5cf6',
+        alignItems: 'center', justifyContent: 'center',
+        borderWidth: 2, borderColor: '#12121a',
+        zIndex: 2,
     },
     detailsAvatarImage: { width: 60, height: 60, borderRadius: 30 },
     detailsTitleContainer: { flex: 1, marginLeft: 16 },
     detailsName: { fontSize: 22, fontWeight: 'bold', color: '#fff' },
     detailsRelationship: { fontSize: 14, color: '#9ca3af', marginTop: 4 },
+    essenceLabel: {
+        flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 8,
+    },
+    essenceLabelText: { color: '#a78bfa', fontSize: 13, fontWeight: '600' },
     detailsCloseBtn: { padding: 4 },
     detailsActionRow: { flexDirection: 'row', gap: 12, marginBottom: 32 },
     detailsActionButton: {

@@ -745,21 +745,35 @@ export default function RecordScreen() {
             summary: data.summary || '',
             mentionedConnections: data.mentioned_connections || [],
           };
+          // Phase 3.2: populate NER modal state
+          const detectedNames: string[] = data.detected_names || [];
+          const matchedIds: string[] = data.mentioned_connections || [];
+          const matchedConns = allConnections.filter(c => matchedIds.includes(c.id));
+          const matchedNamesLower = matchedConns.map(c => c.name.toLowerCase());
+          const unknownNames = detectedNames.filter(
+            n => !matchedNamesLower.some(mn => mn.includes(n.toLowerCase()) || n.toLowerCase().includes(mn))
+          );
+          setNerMatchedConnections(matchedConns.map(c => ({ id: c.id, name: c.name, relationship: c.relationship })));
+          setNerUnknownNames(unknownNames.slice(0, 3));
         } else {
           const localResult = analyzeEmotion(transcription);
           // Local fallback tagging (simple text match)
           const matchedIds = allConnections
             .filter(c => transcription.toLowerCase().includes(c.name.toLowerCase()))
             .map(c => c.id);
-
+          // Also show NER cards for local matches
+          const localMatched = allConnections.filter(c => transcription.toLowerCase().includes(c.name.toLowerCase()));
+          setNerMatchedConnections(localMatched.map(c => ({ id: c.id, name: c.name, relationship: c.relationship })));
+          setNerUnknownNames([]);
           emotionResult = { ...emotionResult, emotion: localResult.emotion, emoji: localResult.emoji, score: localResult.score, mentionedConnections: matchedIds };
         }
       } catch (apiError) {
         console.log('API emotion analysis failed, using local:', apiError);
         const localResult = analyzeEmotion(transcription);
-        const matchedIds = allConnections
-          .filter(c => transcription.toLowerCase().includes(c.name.toLowerCase()))
-          .map(c => c.id);
+        const matchedConns = allConnections.filter(c => transcription.toLowerCase().includes(c.name.toLowerCase()));
+        const matchedIds = matchedConns.map(c => c.id);
+        setNerMatchedConnections(matchedConns.map(c => ({ id: c.id, name: c.name, relationship: c.relationship })));
+        setNerUnknownNames([]);
         emotionResult = { ...emotionResult, emotion: localResult.emotion, emoji: localResult.emoji, score: localResult.score, mentionedConnections: matchedIds };
       }
 
@@ -857,20 +871,32 @@ export default function RecordScreen() {
             summary: data.summary || '',
             mentionedConnections: data.mentioned_connections || [],
           };
+          // Phase 3.2: populate NER modal state
+          const detectedNames2: string[] = data.detected_names || [];
+          const matchedIds2: string[] = data.mentioned_connections || [];
+          const matchedConns2 = allConnections.filter(c => matchedIds2.includes(c.id));
+          const matchedNamesLower2 = matchedConns2.map(c => c.name.toLowerCase());
+          const unknownNames2 = detectedNames2.filter(
+            n => !matchedNamesLower2.some(mn => mn.includes(n.toLowerCase()) || n.toLowerCase().includes(mn))
+          );
+          setNerMatchedConnections(matchedConns2.map(c => ({ id: c.id, name: c.name, relationship: c.relationship })));
+          setNerUnknownNames(unknownNames2.slice(0, 3));
         } else {
           // Fallback to local analysis
           const localResult = analyzeEmotion(textMemory);
-          const matchedIds = allConnections
-            .filter(c => textMemory.toLowerCase().includes(c.name.toLowerCase()))
-            .map(c => c.id);
+          const localMatched2 = allConnections.filter(c => textMemory.toLowerCase().includes(c.name.toLowerCase()));
+          const matchedIds = localMatched2.map(c => c.id);
+          setNerMatchedConnections(localMatched2.map(c => ({ id: c.id, name: c.name, relationship: c.relationship })));
+          setNerUnknownNames([]);
           emotionResult = { ...emotionResult, emotion: localResult.emotion, emoji: localResult.emoji, score: localResult.score, mentionedConnections: matchedIds };
         }
       } catch (apiError) {
         console.log('API emotion analysis failed, using local:', apiError);
         const localResult = analyzeEmotion(textMemory);
-        const matchedIds = allConnections
-          .filter(c => textMemory.toLowerCase().includes(c.name.toLowerCase()))
-          .map(c => c.id);
+        const matchedConns3 = allConnections.filter(c => textMemory.toLowerCase().includes(c.name.toLowerCase()));
+        const matchedIds = matchedConns3.map(c => c.id);
+        setNerMatchedConnections(matchedConns3.map(c => ({ id: c.id, name: c.name, relationship: c.relationship })));
+        setNerUnknownNames([]);
         emotionResult = { ...emotionResult, emotion: localResult.emotion, emoji: localResult.emoji, score: localResult.score, mentionedConnections: matchedIds };
       }
 
