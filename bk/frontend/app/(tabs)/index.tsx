@@ -405,6 +405,9 @@ export default function RecordScreen() {
 
   const [showEmotionModal, setShowEmotionModal] = useState(false);
   const [savedMemory, setSavedMemory] = useState<LocalMemory | null>(null);
+  // Phase 3.2 – NER cross-referencing state
+  const [nerMatchedConnections, setNerMatchedConnections] = useState<Array<{ id: string; name: string; relationship: string }>>([]);
+  const [nerUnknownNames, setNerUnknownNames] = useState<string[]>([]); // names NOT in constellation
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
   // Animações de waveform para feedback visual de captação
@@ -1377,12 +1380,91 @@ export default function RecordScreen() {
                 </View>
               )}
 
+              {/* Phase 3.2: NER Cross-referencing – Matched connections (link prompt) */}
+              {nerMatchedConnections.length > 0 && (
+                <View style={styles.nerSection}>
+                  {nerMatchedConnections.map(conn => (
+                    <View key={conn.id} style={styles.nerCard}>
+                      <View style={styles.nerCardIcon}>
+                        <Ionicons name="people" size={18} color="#8b5cf6" />
+                      </View>
+                      <Text style={styles.nerCardText}>
+                        Você mencionou <Text style={styles.nerHighlight}>{conn.name}</Text>. Deseja vincular esta memória à constelação dessa pessoa?
+                      </Text>
+                      <View style={styles.nerCardActions}>
+                        <TouchableOpacity
+                          style={[styles.nerBtn, styles.nerBtnYes]}
+                          onPress={async () => {
+                            if (savedMemory) {
+                              const updated = {
+                                ...savedMemory,
+                                mentionedConnections: [...(savedMemory.mentionedConnections || []), conn.id].filter((v, i, a) => a.indexOf(v) === i),
+                              };
+                              await localStorage.saveMemory(updated);
+                              setSavedMemory(updated);
+                            }
+                            setNerMatchedConnections(prev => prev.filter(c => c.id !== conn.id));
+                          }}
+                        >
+                          <Text style={styles.nerBtnText}>Sim</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.nerBtn, styles.nerBtnNo]}
+                          onPress={() => setNerMatchedConnections(prev => prev.filter(c => c.id !== conn.id))}
+                        >
+                          <Text style={[styles.nerBtnText, { color: '#9ca3af' }]}>Não</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {/* Phase 3.2: NER Cross-referencing – Unknown names (create connection prompt) */}
+              {nerUnknownNames.length > 0 && (
+                <View style={styles.nerSection}>
+                  {nerUnknownNames.map(name => (
+                    <View key={name} style={[styles.nerCard, styles.nerCardNew]}>
+                      <View style={[styles.nerCardIcon, { backgroundColor: 'rgba(16, 185, 129, 0.15)' }]}>
+                        <Ionicons name="person-add-outline" size={18} color="#10b981" />
+                      </View>
+                      <Text style={styles.nerCardText}>
+                        Você mencionou <Text style={[styles.nerHighlight, { color: '#10b981' }]}>{name}</Text>. Deseja criar uma nova conexão na sua constelação para essa pessoa?
+                      </Text>
+                      <View style={styles.nerCardActions}>
+                        <TouchableOpacity
+                          style={[styles.nerBtn, { backgroundColor: 'rgba(16, 185, 129, 0.2)', borderColor: 'rgba(16, 185, 129, 0.5)' }]}
+                          onPress={() => {
+                            setNerUnknownNames(prev => prev.filter(n => n !== name));
+                            setShowEmotionModal(false);
+                            setSavedMemory(null);
+                            // Navigate to connections tab with a pre-filled name hint
+                            // @ts-ignore
+                            router.push({ pathname: '/(tabs)/connections', params: { prefillName: name } as any });
+                          }}
+                        >
+                          <Text style={[styles.nerBtnText, { color: '#10b981' }]}>Criar</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.nerBtn, styles.nerBtnNo]}
+                          onPress={() => setNerUnknownNames(prev => prev.filter(n => n !== name))}
+                        >
+                          <Text style={[styles.nerBtnText, { color: '#9ca3af' }]}>Ignorar</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              )}
+
               <View style={styles.modalActions}>
                 <TouchableOpacity
                   style={[styles.emotionContinueBtn, { flex: 1, backgroundColor: '#374151', marginRight: 8 }]}
                   onPress={() => {
                     setShowEmotionModal(false);
                     setSavedMemory(null);
+                    setNerMatchedConnections([]);
+                    setNerUnknownNames([]);
                   }}
                 >
                   <Text style={styles.emotionContinueText}>Continuar</Text>
@@ -1392,6 +1474,8 @@ export default function RecordScreen() {
                   onPress={() => {
                     setShowEmotionModal(false);
                     setSavedMemory(null);
+                    setNerMatchedConnections([]);
+                    setNerUnknownNames([]);
                     // @ts-ignore
                     router.push('/memories_history');
                   }}
@@ -1409,6 +1493,33 @@ export default function RecordScreen() {
 }
 
 const styles = StyleSheet.create({
+  // ── Phase 3.2 NER cards ──
+  nerSection: { marginTop: 12, gap: 10 },
+  nerCard: {
+    backgroundColor: 'rgba(139, 92, 246, 0.08)',
+    borderWidth: 1, borderColor: 'rgba(139, 92, 246, 0.25)',
+    borderRadius: 14, padding: 14, gap: 10,
+  },
+  nerCardNew: {
+    backgroundColor: 'rgba(16, 185, 129, 0.06)',
+    borderColor: 'rgba(16, 185, 129, 0.25)',
+  },
+  nerCardIcon: {
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: 'rgba(139, 92, 246, 0.15)',
+    alignItems: 'center', justifyContent: 'center', alignSelf: 'flex-start',
+  },
+  nerCardText: { color: '#d1d5db', fontSize: 13, lineHeight: 19 },
+  nerHighlight: { color: '#a78bfa', fontWeight: '700' },
+  nerCardActions: { flexDirection: 'row', gap: 10 },
+  nerBtn: {
+    flex: 1, paddingVertical: 9, alignItems: 'center', borderRadius: 10,
+    borderWidth: 1, borderColor: 'rgba(139, 92, 246, 0.4)',
+  },
+  nerBtnYes: { backgroundColor: 'rgba(139, 92, 246, 0.2)' },
+  nerBtnNo: { backgroundColor: 'rgba(55, 65, 81, 0.4)', borderColor: 'rgba(75, 85, 99, 0.4)' },
+  nerBtnText: { color: '#a78bfa', fontWeight: '600', fontSize: 13 },
+
   container: {
     flex: 1,
     backgroundColor: '#0a0a0f',

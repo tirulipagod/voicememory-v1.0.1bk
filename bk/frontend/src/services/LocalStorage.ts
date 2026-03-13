@@ -51,6 +51,10 @@ export interface Connection {
   updatedAt: string;
   synced: boolean;
   deleted?: boolean;
+  // Phase 3.3 – Copiloto Relacional (smart-cache: only updated when new memory is added)
+  copilotSummary?: string;          // 2-line AI relational insight
+  copilotSummaryUpdatedAt?: string; // ISO timestamp – used to detect stale cache
+  copilotSummaryMemoryCount?: number; // memory count at time of last summary generation
 }
 
 export interface LocalMemory {
@@ -385,6 +389,25 @@ class LocalStorageService {
     return memories.filter(m =>
       m.mentionedConnections && m.mentionedConnections.includes(connectionId)
     );
+  }
+
+  // Phase 3.3: Update copilot summary fields (smart-cache, avoids full connection rewrite)
+  async updateConnectionCopilotSummary(
+    connectionId: string,
+    summary: string,
+    memoryCount: number
+  ): Promise<void> {
+    const connections = await this.getAllConnectionsIncludingDeleted();
+    const index = connections.findIndex(c => c.id === connectionId);
+    if (index >= 0) {
+      connections[index] = {
+        ...connections[index],
+        copilotSummary: summary,
+        copilotSummaryUpdatedAt: new Date().toISOString(),
+        copilotSummaryMemoryCount: memoryCount,
+      };
+      await AsyncStorage.setItem(STORAGE_KEYS.CONNECTIONS, JSON.stringify(connections));
+    }
   }
 
   // Profile methods

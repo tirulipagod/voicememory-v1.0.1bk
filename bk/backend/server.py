@@ -654,9 +654,15 @@ async def transcribe_audio_public(request: TranscribeRequest):
     return TranscribeResponse(transcription=transcription or "", segments=segments)
 
 # Public emotion analysis endpoint
+class ConnectionInfo(BaseModel):
+    id: str
+    name: str
+    relationship: str
+
 class EmotionAnalysisRequest(BaseModel):
     text: str
     persona: Optional[str] = "therapeutic"
+    connections: Optional[List[ConnectionInfo]] = []   # Phase 3: for cross-ref NER
 
 class LifeAreaResponse(BaseModel):
     id: str
@@ -675,11 +681,50 @@ class EmotionAnalysisResponse(BaseModel):
     summary: str
     persona_insight: Optional[str] = ""
     life_areas: Optional[List[LifeAreaResponse]] = []
+    mentioned_connections: Optional[List[str]] = []   # IDs matched against constellation
+    detected_names: Optional[List[str]] = []          # Raw NER output for UI prompts
 
 @api_router.post("/analyze-emotion", response_model=EmotionAnalysisResponse)
 async def analyze_emotion_public(request: EmotionAnalysisRequest):
     """Public emotion analysis endpoint for local-first approach"""
     emotion_data = await analyze_emotion(request.text, request.persona or "therapeutic")
+
+    # ── Phase 3.1: NER ─ safe JSON.parse equivalent ──
+    detected_names: List[str] = []
+    if gemini_client and request.text.strip():
+        try:
+            ner_prompt = (
+                f"Extrai todos os nomes próprios e apelidos de pessoas mencionadas neste relato. "
+                f"Retorna OBRIGATORIAMENTE um array JSON válido e nada mais. "
+                f'Exemplo: ["Emily", "Marcos", "Amor"]. Texto: {request.text}'
+            )
+            ner_response = gemini_client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=[ner_prompt]
+            )
+            raw = ner_response.text.strip()
+            # Strip markdown fences if present
+            if raw.startswith("```"):
+                raw = raw.split("```")[1]
+                if raw.startswith("json"): raw = raw[4:]
+            if raw.endswith("```"): raw = raw[:-3]
+            parsed = json.loads(raw.strip())
+            if isinstance(parsed, list):
+                detected_names = [n for n in parsed if isinstance(n, str)]
+        except Exception as ner_err:
+            logger.warning(f"NER extraction failed silently: {ner_err}")
+            detected_names = []
+
+    # ── Phase 3.2: Cross-reference NER names against constellation connections ──
+    mentioned_connection_ids: List[str] = []
+    if request.connections:
+        lower_names = [n.lower() for n in detected_names]
+        for conn in request.connections:
+            # Match if the connection name appears in detected names OR raw text
+            if (conn.name.lower() in lower_names or
+                    conn.name.lower() in request.text.lower()):
+                mentioned_connection_ids.append(conn.id)
+
     return EmotionAnalysisResponse(
         emotion=emotion_data.get("emotion", "neutro"),
         emotion_emoji=emotion_data.get("emotion_emoji", "😐"),
@@ -687,8 +732,45 @@ async def analyze_emotion_public(request: EmotionAnalysisRequest):
         emotions=emotion_data.get("emotions", []),
         summary=emotion_data.get("summary", ""),
         persona_insight=emotion_data.get("persona_insight", ""),
-        life_areas=emotion_data.get("life_areas", [])
+        life_areas=emotion_data.get("life_areas", []),
+        mentioned_connections=mentioned_connection_ids,
+        detected_names=detected_names,
     )
+
+# ──────────────── PHASE 3.3: COPILOTO RELACIONAL ─────────────────────
+class ConnectionSummaryRequest(BaseModel):
+    connection_name: str
+    connection_relationship: str
+    memories: List[str]          # Last N transcriptions (latest first)
+
+class ConnectionSummaryResponse(BaseModel):
+    summary: str
+
+@api_router.post("/connection-summary", response_model=ConnectionSummaryResponse)
+async def generate_connection_summary(request: ConnectionSummaryRequest):
+    """Generate a 2-line relational Copilot summary for a connection.
+    Cost-optimised: only called from the frontend when new memories were added."""
+    if not gemini_client:
+        return ConnectionSummaryResponse(summary="")
+
+    memories_text = "\n".join(f"- {m}" for m in request.memories[:10])  # cap at 10
+    prompt = (
+        f"Você é um copiloto relacional empático. "
+        f"Com base nas últimas memórias envolvendo '{request.connection_name}' ({request.connection_relationship}), "
+        f"escreva um insight conciso de exatamente 2 frases, em português, na segunda pessoa (dirigido ao utilizador). "
+        f"Capture o padrão emocional da relação de forma acolhedora. Não invente factos. "
+        f"Memórias:\n{memories_text}\n\n"
+        f"Retorna APENAS as 2 frases, sem títulos, aspas ou markdown."
+    )
+    try:
+        resp = gemini_client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=[prompt]
+        )
+        return ConnectionSummaryResponse(summary=resp.text.strip())
+    except Exception as e:
+        logger.warning(f"Connection summary failed: {e}")
+        return ConnectionSummaryResponse(summary="")
 
 # ==================== PERSONAS & LIFE AREAS ENDPOINTS ====================
 

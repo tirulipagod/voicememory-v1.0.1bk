@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useLocalSearchParams } from 'expo-router';
 import { localStorage, Connection } from '../../src/services/LocalStorage';
 import ConnectionsMap, { ConnectionMetadata } from '../../src/components/connections/ConnectionsMap';
 import * as ImagePicker from 'expo-image-picker';
@@ -12,6 +13,7 @@ import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
 
 export default function ConnectionsScreen() {
+    const params = useLocalSearchParams<{ prefillName?: string }>();
     const [connections, setConnections] = useState<Connection[]>([]);
     const [connectionMetadata, setConnectionMetadata] = useState<ConnectionMetadata[]>([]);
     const [isAddModalVisible, setIsAddModalVisible] = useState(false);
@@ -30,9 +32,21 @@ export default function ConnectionsScreen() {
     const [selectedConnection, setSelectedConnection] = useState<Connection | null>(null);
     const [connectionMemories, setConnectionMemories] = useState<any[]>([]);
 
+    // Phase 3.3: Copiloto Relacional state
+    const [copilotSummary, setCopilotSummary] = useState<string>('');
+    const [isLoadingCopilot, setIsLoadingCopilot] = useState(false);
+
     useEffect(() => {
         loadConnections();
     }, []);
+
+    // Phase 3.2: If navigated here with prefillName, open Add modal pre-filled
+    useEffect(() => {
+        if (params.prefillName) {
+            setNewName(params.prefillName);
+            setIsAddModalVisible(true);
+        }
+    }, [params.prefillName]);
 
     // Pulse animation for recording indicator
     useEffect(() => {
@@ -79,17 +93,74 @@ export default function ConnectionsScreen() {
 
     const handleNodePress = async (connection: Connection) => {
         setSelectedConnection(connection);
+        setCopilotSummary('');
+        setIsLoadingCopilot(false);
+        let memories: any[] = [];
         try {
-            const memories = await localStorage.getMemoriesByConnection(connection.id);
+            memories = await localStorage.getMemoriesByConnection(connection.id);
             setConnectionMemories(memories);
         } catch (e) {
             setConnectionMemories([]);
+        }
+
+        // Phase 3.3: Smart-cache copilot summary
+        // Only regenerate if memory count changed since last generation
+        const conn = await localStorage.getConnections().then(cs => cs.find(c => c.id === connection.id));
+        const cachedSummary = conn?.copilotSummary || '';
+        const cachedCount = conn?.copilotSummaryMemoryCount ?? -1;
+
+        if (memories.length === 0) {
+            setCopilotSummary(''); // No memories, no summary
+            return;
+        }
+
+        if (cachedSummary && cachedCount === memories.length) {
+            // Cache is valid - same memory count
+            setCopilotSummary(cachedSummary);
+            return;
+        }
+
+        // Fetch fresh summary in background
+        setIsLoadingCopilot(true);
+        try {
+            const backendUrl = process.env.EXPO_PUBLIC_BACKEND_URL || '';
+            const lastTranscriptions = [...memories]
+                .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+                .slice(0, 10)
+                .map(m => m.transcription || '')
+                .filter(Boolean);
+
+            const resp = await fetch(`${backendUrl}/api/connection-summary`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    connection_name: connection.name,
+                    connection_relationship: connection.relationship,
+                    memories: lastTranscriptions,
+                }),
+            });
+
+            if (resp.ok) {
+                const data = await resp.json();
+                const newSummary = data.summary || '';
+                setCopilotSummary(newSummary);
+                // Persist to cache
+                if (newSummary) {
+                    await localStorage.updateConnectionCopilotSummary(connection.id, newSummary, memories.length);
+                }
+            }
+        } catch (e) {
+            console.log('Copilot summary failed silently:', e);
+        } finally {
+            setIsLoadingCopilot(false);
         }
     };
 
     const closeNodeDetails = () => {
         setSelectedConnection(null);
         setConnectionMemories([]);
+        setCopilotSummary('');
+        setIsLoadingCopilot(false);
     };
 
     const resetAddModal = () => {
@@ -280,6 +351,20 @@ export default function ConnectionsScreen() {
                                         </View>
                                     ) : (
                                         <View style={styles.detailsMemoriesList}>
+                                            {/* Phase 3.3: Copiloto Relacional block */}
+                                            {(copilotSummary || isLoadingCopilot) && (
+                                                <View style={styles.copilotCard}>
+                                                    <View style={styles.copilotHeader}>
+                                                        <Ionicons name="sparkles" size={14} color="#a78bfa" />
+                                                        <Text style={styles.copilotLabel}>Copiloto Relacional</Text>
+                                                    </View>
+                                                    {isLoadingCopilot ? (
+                                                        <ActivityIndicator size="small" color="#8b5cf6" style={{ marginTop: 8 }} />
+                                                    ) : (
+                                                        <Text style={styles.copilotText}>{copilotSummary}</Text>
+                                                    )}
+                                                </View>
+                                            )}
                                             {connectionMemories.slice(0, 3).map((mem) => (
                                                 <TouchableOpacity key={mem.id} style={styles.detailsMemoryCard}>
                                                     <Text style={styles.detailsMemoryEmoji}>{mem.emotionEmoji || '💭'}</Text>
@@ -541,4 +626,21 @@ const styles = StyleSheet.create({
     detailsMemoryDate: { color: '#6b7280', fontSize: 12, marginTop: 4 },
     detailsViewAllBtn: { paddingVertical: 12, alignItems: 'center' },
     detailsViewAllText: { color: '#a78bfa', fontSize: 14, fontWeight: '600' },
+
+    // Phase 3.3: Copiloto Relacional card
+    copilotCard: {
+        backgroundColor: 'rgba(139, 92, 246, 0.07)',
+        borderWidth: 1, borderColor: 'rgba(139, 92, 246, 0.22)',
+        borderRadius: 16, padding: 14, marginBottom: 4,
+    },
+    copilotHeader: {
+        flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8,
+    },
+    copilotLabel: {
+        fontSize: 11, fontWeight: '700', color: '#a78bfa',
+        textTransform: 'uppercase', letterSpacing: 0.8,
+    },
+    copilotText: {
+        color: '#d1d5db', fontSize: 14, lineHeight: 21, fontStyle: 'italic',
+    },
 });
