@@ -101,7 +101,22 @@ export default function ConnectionsScreen() {
         setIsLoadingCopilot(false);
         let memories: any[] = [];
         try {
-            memories = await localStorage.getMemoriesByConnection(connection.id);
+            // Hybrid search: by mentionedConnections tag OR by name in transcription (for pre-Phase3 memories)
+            const allMems = await localStorage.getMemories();
+            const nameLower = connection.name.toLowerCase();
+            const byTag = allMems.filter(m =>
+                m.mentionedConnections && m.mentionedConnections.includes(connection.id)
+            );
+            const byName = allMems.filter(m =>
+                !m.mentionedConnections?.includes(connection.id) &&
+                m.transcription?.toLowerCase().includes(nameLower)
+            );
+            // Merge, dedup by id, sort newest first
+            const merged = [...byTag, ...byName];
+            const seen = new Set<string>();
+            memories = merged
+                .filter(m => { if (seen.has(m.id)) return false; seen.add(m.id); return true; })
+                .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
             setConnectionMemories(memories);
         } catch (e) {
             setConnectionMemories([]);
@@ -350,15 +365,15 @@ export default function ConnectionsScreen() {
                                             ) : (
                                                 <Ionicons name="person" size={40} color="#a78bfa" />
                                             )}
-                                            {/* Essence play badge */}
+                                            {/* Essence leaf badge */}
                                             {selectedConnection.signatureMemoryId && (
                                                 <TouchableOpacity
                                                     style={styles.essencePlayBadge}
                                                     onPress={() => toggleEssencePlayback(selectedConnection.signatureMemoryId!)}
                                                 >
                                                     <Ionicons
-                                                        name={isPlayingEssence ? 'stop' : 'play'}
-                                                        size={12}
+                                                        name={isPlayingEssence ? 'stop' : 'leaf'}
+                                                        size={11}
                                                         color="#fff"
                                                     />
                                                 </TouchableOpacity>
@@ -373,11 +388,11 @@ export default function ConnectionsScreen() {
                                                     onPress={() => toggleEssencePlayback(selectedConnection.signatureMemoryId!)}
                                                 >
                                                     <Ionicons
-                                                        name={isPlayingEssence ? 'stop-circle-outline' : 'play-circle-outline'}
+                                                        name={isPlayingEssence ? 'stop-circle-outline' : 'leaf-outline'}
                                                         size={14}
-                                                        color="#a78bfa"
+                                                        color="#d97706"
                                                     />
-                                                    <Text style={styles.essenceLabelText}>
+                                                    <Text style={[styles.essenceLabelText, { color: '#d97706' }]}>
                                                         {isPlayingEssence ? 'Parar essência' : 'Ouvir essência'}
                                                     </Text>
                                                 </TouchableOpacity>
@@ -645,7 +660,7 @@ const styles = StyleSheet.create({
     essencePlayBadge: {
         position: 'absolute', bottom: 0, right: 0,
         width: 22, height: 22, borderRadius: 11,
-        backgroundColor: '#8b5cf6',
+        backgroundColor: '#d97706',
         alignItems: 'center', justifyContent: 'center',
         borderWidth: 2, borderColor: '#12121a',
         zIndex: 2,

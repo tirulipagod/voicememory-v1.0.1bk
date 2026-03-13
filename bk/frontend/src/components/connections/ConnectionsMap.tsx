@@ -356,7 +356,7 @@ export default function ConnectionsMap({ connections, metadata, onNodePress, onA
                                     }
                                     {c.signatureMemoryId && (
                                         <View style={S.badge}>
-                                            <Ionicons name="play" size={9} color="#fff" />
+                                            <Ionicons name="leaf" size={9} color="#fff" />
                                         </View>
                                     )}
                                 </View>
@@ -401,7 +401,7 @@ const S = StyleSheet.create({
     },
     badge: {
         position: 'absolute', bottom: -2, right: -2,
-        backgroundColor: '#10b981', width: 18, height: 18, borderRadius: 9,
+        backgroundColor: '#d97706', width: 18, height: 18, borderRadius: 9,
         alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#0a0a0f',
     },
     nodeName: { color: '#fff', fontSize: 12, fontWeight: '700', textAlign: 'center', marginTop: 6, maxWidth: 80 },

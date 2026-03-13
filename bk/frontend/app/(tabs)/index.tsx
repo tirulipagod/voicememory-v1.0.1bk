@@ -1338,177 +1338,183 @@ export default function RecordScreen() {
         >
           <View style={styles.modalOverlay}>
             <View style={styles.emotionModalContent}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>✨ Memória salva!</Text>
-                <TouchableOpacity onPress={() => {
-                  setShowEmotionModal(false);
-                  setSavedMemory(null);
-                }}>
-                  <Ionicons name="close" size={24} color="#9ca3af" />
-                </TouchableOpacity>
-              </View>
-
-              <Text style={styles.emotionModalSubtitle}>
-                A IA detectou a seguinte emoção principal:
-              </Text>
-
-              <View style={styles.currentEmotionBadge}>
-                <Text style={styles.currentEmotionEmoji}>{savedMemory.emotionEmoji}</Text>
-                <Text style={styles.currentEmotionText}>{savedMemory.emotion}</Text>
-              </View>
-
-              {savedMemory.summary && (
-                <View style={{
-                  marginTop: 12,
-                  padding: 12,
-                  backgroundColor: savedMemory.summary.includes('[ALERTA_SENSIVEL]') ? 'rgba(239, 68, 68, 0.1)' : 'rgba(139, 92, 246, 0.1)',
-                  borderRadius: 12,
-                  borderWidth: 1,
-                  borderColor: savedMemory.summary.includes('[ALERTA_SENSIVEL]') ? 'rgba(239, 68, 68, 0.3)' : 'rgba(139, 92, 246, 0.2)'
-                }}>
-                  {savedMemory.summary.includes('[ALERTA_SENSIVEL]') && (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 6 }}>
-                      <Ionicons name="warning" size={16} color="#ef4444" />
-                      <Text style={{ color: '#ef4444', fontWeight: 'bold', fontSize: 13 }}>Aviso de Segurança</Text>
-                    </View>
-                  )}
-                  <Text style={{ color: '#e5e7eb', fontSize: 14, lineHeight: 20, fontStyle: 'italic' }}>
-                    {savedMemory.summary.replace('[ALERTA_SENSIVEL]', '').trim()}
-                  </Text>
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={{ paddingBottom: 8 }}
+                style={{ width: '100%' }}
+              >
+                <View style={styles.modalHeader}>
+                  <Text style={styles.modalTitle}>✨ Memória salva!</Text>
+                  <TouchableOpacity onPress={() => {
+                    setShowEmotionModal(false);
+                    setSavedMemory(null);
+                  }}>
+                    <Ionicons name="close" size={24} color="#9ca3af" />
+                  </TouchableOpacity>
                 </View>
-              )}
 
-              {savedMemory.emotions && savedMemory.emotions.length > 1 && (
-                <View style={styles.emotionSuggestionsContainer}>
-                  <Text style={styles.emotionSuggestionsTitle}>Você prefere alguma destas como principal?</Text>
-                  <View style={styles.emotionOptions}>
-                    {savedMemory.emotions.slice(0, 3).map((em, idx) => (
-                      <TouchableOpacity
-                        key={idx}
-                        style={[styles.emotionOptionBtn, savedMemory.emotion === em.emotion && styles.emotionOptionActive]}
-                        onPress={async () => {
-                          const updated = { ...savedMemory, emotion: em.emotion, emotionEmoji: em.emoji };
-                          await localStorage.saveMemory(updated);
-                          setSavedMemory(updated);
-                          syncWithDrive().catch(e => console.log(e));
-                        }}
-                      >
-                        <Text style={styles.emotionOptionEmoji}>{em.emoji}</Text>
-                        <View>
-                          <Text style={[styles.emotionOptionText, savedMemory.emotion === em.emotion && styles.emotionOptionTextActive]}>
-                            {em.emotion}
-                          </Text>
-                          <Text style={styles.emotionIntensity}>{em.intensity}% intenso</Text>
+                <Text style={styles.emotionModalSubtitle}>
+                  A IA detectou a seguinte emoção principal:
+                </Text>
+
+                <View style={styles.currentEmotionBadge}>
+                  <Text style={styles.currentEmotionEmoji}>{savedMemory.emotionEmoji}</Text>
+                  <Text style={styles.currentEmotionText}>{savedMemory.emotion}</Text>
+                </View>
+
+                {savedMemory.summary && (
+                  <View style={{
+                    marginTop: 12,
+                    padding: 12,
+                    backgroundColor: savedMemory.summary.includes('[ALERTA_SENSIVEL]') ? 'rgba(239, 68, 68, 0.1)' : 'rgba(139, 92, 246, 0.1)',
+                    borderRadius: 12,
+                    borderWidth: 1,
+                    borderColor: savedMemory.summary.includes('[ALERTA_SENSIVEL]') ? 'rgba(239, 68, 68, 0.3)' : 'rgba(139, 92, 246, 0.2)'
+                  }}>
+                    {savedMemory.summary.includes('[ALERTA_SENSIVEL]') && (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 6 }}>
+                        <Ionicons name="warning" size={16} color="#ef4444" />
+                        <Text style={{ color: '#ef4444', fontWeight: 'bold', fontSize: 13 }}>Aviso de Segurança</Text>
+                      </View>
+                    )}
+                    <Text style={{ color: '#e5e7eb', fontSize: 14, lineHeight: 20, fontStyle: 'italic' }}>
+                      {savedMemory.summary.replace('[ALERTA_SENSIVEL]', '').trim()}
+                    </Text>
+                  </View>
+                )}
+
+                {savedMemory.emotions && savedMemory.emotions.length > 1 && (
+                  <View style={styles.emotionSuggestionsContainer}>
+                    <Text style={styles.emotionSuggestionsTitle}>Você prefere alguma destas como principal?</Text>
+                    <View style={styles.emotionOptions}>
+                      {savedMemory.emotions.slice(0, 3).map((em, idx) => (
+                        <TouchableOpacity
+                          key={idx}
+                          style={[styles.emotionOptionBtn, savedMemory.emotion === em.emotion && styles.emotionOptionActive]}
+                          onPress={async () => {
+                            const updated = { ...savedMemory, emotion: em.emotion, emotionEmoji: em.emoji };
+                            await localStorage.saveMemory(updated);
+                            setSavedMemory(updated);
+                            syncWithDrive().catch(e => console.log(e));
+                          }}
+                        >
+                          <Text style={styles.emotionOptionEmoji}>{em.emoji}</Text>
+                          <View>
+                            <Text style={[styles.emotionOptionText, savedMemory.emotion === em.emotion && styles.emotionOptionTextActive]}>
+                              {em.emotion}
+                            </Text>
+                            <Text style={styles.emotionIntensity}>{em.intensity}% intenso</Text>
+                          </View>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+                )}
+
+                {/* Phase 3.2: NER Cross-referencing – Matched connections (link prompt) */}
+                {nerMatchedConnections.length > 0 && (
+                  <View style={styles.nerSection}>
+                    {nerMatchedConnections.map(conn => (
+                      <View key={conn.id} style={styles.nerCard}>
+                        <View style={styles.nerCardIcon}>
+                          <Ionicons name="people" size={18} color="#8b5cf6" />
                         </View>
-                      </TouchableOpacity>
+                        <Text style={styles.nerCardText}>
+                          Você mencionou <Text style={styles.nerHighlight}>{conn.name}</Text>. Deseja vincular esta memória à constelação dessa pessoa?
+                        </Text>
+                        <View style={styles.nerCardActions}>
+                          <TouchableOpacity
+                            style={[styles.nerBtn, styles.nerBtnYes]}
+                            onPress={async () => {
+                              if (savedMemory) {
+                                const updated = {
+                                  ...savedMemory,
+                                  mentionedConnections: [...(savedMemory.mentionedConnections || []), conn.id].filter((v, i, a) => a.indexOf(v) === i),
+                                };
+                                await localStorage.saveMemory(updated);
+                                setSavedMemory(updated);
+                              }
+                              setNerMatchedConnections(prev => prev.filter(c => c.id !== conn.id));
+                            }}
+                          >
+                            <Text style={styles.nerBtnText}>Sim</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[styles.nerBtn, styles.nerBtnNo]}
+                            onPress={() => setNerMatchedConnections(prev => prev.filter(c => c.id !== conn.id))}
+                          >
+                            <Text style={[styles.nerBtnText, { color: '#9ca3af' }]}>Não</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
                     ))}
                   </View>
-                </View>
-              )}
+                )}
 
-              {/* Phase 3.2: NER Cross-referencing – Matched connections (link prompt) */}
-              {nerMatchedConnections.length > 0 && (
-                <View style={styles.nerSection}>
-                  {nerMatchedConnections.map(conn => (
-                    <View key={conn.id} style={styles.nerCard}>
-                      <View style={styles.nerCardIcon}>
-                        <Ionicons name="people" size={18} color="#8b5cf6" />
+                {/* Phase 3.2: NER Cross-referencing – Unknown names (create connection prompt) */}
+                {nerUnknownNames.length > 0 && (
+                  <View style={styles.nerSection}>
+                    {nerUnknownNames.map(name => (
+                      <View key={name} style={[styles.nerCard, styles.nerCardNew]}>
+                        <View style={[styles.nerCardIcon, { backgroundColor: 'rgba(16, 185, 129, 0.15)' }]}>
+                          <Ionicons name="person-add-outline" size={18} color="#10b981" />
+                        </View>
+                        <Text style={styles.nerCardText}>
+                          Você mencionou <Text style={[styles.nerHighlight, { color: '#10b981' }]}>{name}</Text>. Deseja criar uma nova conexão na sua constelação para essa pessoa?
+                        </Text>
+                        <View style={styles.nerCardActions}>
+                          <TouchableOpacity
+                            style={[styles.nerBtn, { backgroundColor: 'rgba(16, 185, 129, 0.2)', borderColor: 'rgba(16, 185, 129, 0.5)' }]}
+                            onPress={() => {
+                              setNerUnknownNames(prev => prev.filter(n => n !== name));
+                              setShowEmotionModal(false);
+                              setSavedMemory(null);
+                              // Navigate to connections tab with a pre-filled name hint
+                              // @ts-ignore
+                              router.push({ pathname: '/(tabs)/connections', params: { prefillName: name } as any });
+                            }}
+                          >
+                            <Text style={[styles.nerBtnText, { color: '#10b981' }]}>Criar</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[styles.nerBtn, styles.nerBtnNo]}
+                            onPress={() => setNerUnknownNames(prev => prev.filter(n => n !== name))}
+                          >
+                            <Text style={[styles.nerBtnText, { color: '#9ca3af' }]}>Ignorar</Text>
+                          </TouchableOpacity>
+                        </View>
                       </View>
-                      <Text style={styles.nerCardText}>
-                        Você mencionou <Text style={styles.nerHighlight}>{conn.name}</Text>. Deseja vincular esta memória à constelação dessa pessoa?
-                      </Text>
-                      <View style={styles.nerCardActions}>
-                        <TouchableOpacity
-                          style={[styles.nerBtn, styles.nerBtnYes]}
-                          onPress={async () => {
-                            if (savedMemory) {
-                              const updated = {
-                                ...savedMemory,
-                                mentionedConnections: [...(savedMemory.mentionedConnections || []), conn.id].filter((v, i, a) => a.indexOf(v) === i),
-                              };
-                              await localStorage.saveMemory(updated);
-                              setSavedMemory(updated);
-                            }
-                            setNerMatchedConnections(prev => prev.filter(c => c.id !== conn.id));
-                          }}
-                        >
-                          <Text style={styles.nerBtnText}>Sim</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[styles.nerBtn, styles.nerBtnNo]}
-                          onPress={() => setNerMatchedConnections(prev => prev.filter(c => c.id !== conn.id))}
-                        >
-                          <Text style={[styles.nerBtnText, { color: '#9ca3af' }]}>Não</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  ))}
-                </View>
-              )}
+                    ))}
+                  </View>
+                )}
 
-              {/* Phase 3.2: NER Cross-referencing – Unknown names (create connection prompt) */}
-              {nerUnknownNames.length > 0 && (
-                <View style={styles.nerSection}>
-                  {nerUnknownNames.map(name => (
-                    <View key={name} style={[styles.nerCard, styles.nerCardNew]}>
-                      <View style={[styles.nerCardIcon, { backgroundColor: 'rgba(16, 185, 129, 0.15)' }]}>
-                        <Ionicons name="person-add-outline" size={18} color="#10b981" />
-                      </View>
-                      <Text style={styles.nerCardText}>
-                        Você mencionou <Text style={[styles.nerHighlight, { color: '#10b981' }]}>{name}</Text>. Deseja criar uma nova conexão na sua constelação para essa pessoa?
-                      </Text>
-                      <View style={styles.nerCardActions}>
-                        <TouchableOpacity
-                          style={[styles.nerBtn, { backgroundColor: 'rgba(16, 185, 129, 0.2)', borderColor: 'rgba(16, 185, 129, 0.5)' }]}
-                          onPress={() => {
-                            setNerUnknownNames(prev => prev.filter(n => n !== name));
-                            setShowEmotionModal(false);
-                            setSavedMemory(null);
-                            // Navigate to connections tab with a pre-filled name hint
-                            // @ts-ignore
-                            router.push({ pathname: '/(tabs)/connections', params: { prefillName: name } as any });
-                          }}
-                        >
-                          <Text style={[styles.nerBtnText, { color: '#10b981' }]}>Criar</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[styles.nerBtn, styles.nerBtnNo]}
-                          onPress={() => setNerUnknownNames(prev => prev.filter(n => n !== name))}
-                        >
-                          <Text style={[styles.nerBtnText, { color: '#9ca3af' }]}>Ignorar</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  ))}
+                <View style={styles.modalActions}>
+                  <TouchableOpacity
+                    style={[styles.emotionContinueBtn, { flex: 1, backgroundColor: '#374151', marginRight: 8 }]}
+                    onPress={() => {
+                      setShowEmotionModal(false);
+                      setSavedMemory(null);
+                      setNerMatchedConnections([]);
+                      setNerUnknownNames([]);
+                    }}
+                  >
+                    <Text style={styles.emotionContinueText}>Continuar</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.emotionContinueBtn, { flex: 1 }]}
+                    onPress={() => {
+                      setShowEmotionModal(false);
+                      setSavedMemory(null);
+                      setNerMatchedConnections([]);
+                      setNerUnknownNames([]);
+                      // @ts-ignore
+                      router.push('/memories_history');
+                    }}
+                  >
+                    <Text style={styles.emotionContinueText}>Ver memórias</Text>
+                  </TouchableOpacity>
                 </View>
-              )}
-
-              <View style={styles.modalActions}>
-                <TouchableOpacity
-                  style={[styles.emotionContinueBtn, { flex: 1, backgroundColor: '#374151', marginRight: 8 }]}
-                  onPress={() => {
-                    setShowEmotionModal(false);
-                    setSavedMemory(null);
-                    setNerMatchedConnections([]);
-                    setNerUnknownNames([]);
-                  }}
-                >
-                  <Text style={styles.emotionContinueText}>Continuar</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.emotionContinueBtn, { flex: 1 }]}
-                  onPress={() => {
-                    setShowEmotionModal(false);
-                    setSavedMemory(null);
-                    setNerMatchedConnections([]);
-                    setNerUnknownNames([]);
-                    // @ts-ignore
-                    router.push('/memories_history');
-                  }}
-                >
-                  <Text style={styles.emotionContinueText}>Ver memórias</Text>
-                </TouchableOpacity>
-              </View>
+              </ScrollView>
             </View>
           </View>
         </Modal>
@@ -2129,7 +2135,8 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 24,
     padding: 24,
     paddingBottom: Platform.OS === 'ios' ? 40 : 24,
-    alignItems: 'center',
+    maxHeight: '90%',
+    width: '100%',
   },
   emotionModalSubtitle: {
     fontSize: 15,
