@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Connection } from '../../services/LocalStorage';
-import Svg, { Defs, RadialGradient, Stop, Circle as SvgCircle, Ellipse } from 'react-native-svg';
+import Svg, { Defs, RadialGradient, LinearGradient, Stop, Circle as SvgCircle, Ellipse } from 'react-native-svg';
 
 const { width, height } = Dimensions.get('window');
 const MAP_WIDTH = width * 3;
@@ -179,25 +179,36 @@ const GlassOrb = memo(({ size, theta }: { size: number; theta: number }) => {
     const id = useRef(`orb${_gobid++}`).current;
     // Specular highlight faces the Sun: direction = theta + PI (pointing back to center)
     const lightAngle = theta + Math.PI;
-    const cx = `${Math.round((0.5 + 0.33 * Math.cos(lightAngle)) * 100)}%`;
-    const cy = `${Math.round((0.5 + 0.33 * Math.sin(lightAngle)) * 100)}%`;
+
+    // Linear gradient coordinates based on light angle
+    const x1 = `${50 + 50 * Math.cos(lightAngle)}%`;
+    const y1 = `${50 + 50 * Math.sin(lightAngle)}%`;
+    const x2 = `${50 - 50 * Math.cos(lightAngle)}%`;
+    const y2 = `${50 - 50 * Math.sin(lightAngle)}%`;
+
     return (
         <Svg
             width={size}
             height={size}
-            style={{ position: 'absolute', top: 0, left: 0, borderRadius: size / 2, overflow: 'hidden' }}
+            style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                borderRadius: size / 2,
+                overflow: 'hidden',
+                // Thin inner border for "glass cut" effect
+                borderWidth: 1,
+                borderColor: 'rgba(255,255,255,0.1)'
+            }}
             pointerEvents="none"
         >
             <Defs>
-                <RadialGradient id={id} cx={cx} cy={cy} r="72%">
-                    {[
-                        <Stop key="g1" offset="0%" stopColor="#ffffff" stopOpacity="0.82" />,
-                        <Stop key="g2" offset="22%" stopColor="#ffffff" stopOpacity="0.22" />,
-                        <Stop key="g3" offset="50%" stopColor="#000000" stopOpacity="0.0" />,
-                        <Stop key="g4" offset="80%" stopColor="#000000" stopOpacity="0.32" />,
-                        <Stop key="g5" offset="100%" stopColor="#000000" stopOpacity="0.70" />,
-                    ]}
-                </RadialGradient>
+                <LinearGradient id={id} x1={x1} y1={y1} x2={x2} y2={y2}>
+                    <Stop offset="0%" stopColor="#ffffff" stopOpacity="0.35" />
+                    <Stop offset="30%" stopColor="#ffffff" stopOpacity="0" />
+                    <Stop offset="60%" stopColor="#000000" stopOpacity="0" />
+                    <Stop offset="100%" stopColor="#000000" stopOpacity="0.8" />
+                </LinearGradient>
             </Defs>
             <SvgCircle cx={size / 2} cy={size / 2} r={size / 2} fill={`url(#${id})`} />
         </Svg>
