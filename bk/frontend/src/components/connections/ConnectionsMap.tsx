@@ -354,12 +354,12 @@ export default function ConnectionsMap({ connections, metadata, onNodePress, onA
                                         ? <Image source={{ uri: c.photoUri }} style={{ width: '100%', height: '100%' }} />
                                         : <Ionicons name="person" size={p.size * 0.48} color={p.color} />
                                     }
-                                    {c.signatureMemoryId && (
-                                        <View style={S.badge}>
-                                            <Ionicons name="leaf" size={9} color="#fff" />
-                                        </View>
-                                    )}
                                 </View>
+                                {c.signatureMemoryId && (
+                                    <View style={S.badge}>
+                                        <Ionicons name="leaf" size={10} color="#fff" />
+                                    </View>
+                                )}
                             </View>
                             <Text style={S.nodeName} numberOfLines={1}>{c.name}</Text>
                             <Text style={S.nodeRel} numberOfLines={1}>{c.relationship}</Text>
@@ -400,9 +400,10 @@ const S = StyleSheet.create({
         alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
     },
     badge: {
-        position: 'absolute', bottom: -2, right: -2,
-        backgroundColor: '#d97706', width: 18, height: 18, borderRadius: 9,
+        position: 'absolute', top: -3, right: -3,
+        backgroundColor: '#d97706', width: 20, height: 20, borderRadius: 10,
         alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#0a0a0f',
+        zIndex: 10,
     },
     nodeName: { color: '#fff', fontSize: 12, fontWeight: '700', textAlign: 'center', marginTop: 6, maxWidth: 80 },
     nodeRel: { color: '#9ca3af', fontSize: 10, textAlign: 'center', maxWidth: 80 },

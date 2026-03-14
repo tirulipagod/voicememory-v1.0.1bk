@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { localStorage, Connection } from '../../src/services/LocalStorage';
 import ConnectionsMap, { ConnectionMetadata } from '../../src/components/connections/ConnectionsMap';
 import * as ImagePicker from 'expo-image-picker';
@@ -13,7 +13,8 @@ import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
 
 export default function ConnectionsScreen() {
-    const params = useLocalSearchParams<{ prefillName?: string }>();
+    const router = useRouter();
+    const params = useLocalSearchParams<{ prefillName?: string, from?: string, memoryId?: string }>();
     const [connections, setConnections] = useState<Connection[]>([]);
     const [connectionMetadata, setConnectionMetadata] = useState<ConnectionMetadata[]>([]);
     const [isAddModalVisible, setIsAddModalVisible] = useState(false);
@@ -49,6 +50,8 @@ export default function ConnectionsScreen() {
         if (params.prefillName) {
             setNewName(params.prefillName);
             setIsAddModalVisible(true);
+            // "Consume" the params so they don't persist or cause stale behavior
+            router.setParams({ prefillName: undefined, from: params.from });
         }
     }, [params.prefillName]);
 
@@ -101,24 +104,16 @@ export default function ConnectionsScreen() {
         setIsLoadingCopilot(false);
         let memories: any[] = [];
         try {
-            // Hybrid search: by mentionedConnections tag OR by name in transcription (for pre-Phase3 memories)
+            // FIXED: Strict association only
             const allMems = await localStorage.getMemories();
-            const nameLower = connection.name.toLowerCase();
-            const byTag = allMems.filter(m =>
-                m.mentionedConnections && m.mentionedConnections.includes(connection.id)
-            );
-            const byName = allMems.filter(m =>
-                !m.mentionedConnections?.includes(connection.id) &&
-                m.transcription?.toLowerCase().includes(nameLower)
-            );
-            // Merge, dedup by id, sort newest first
-            const merged = [...byTag, ...byName];
-            const seen = new Set<string>();
-            memories = merged
-                .filter(m => { if (seen.has(m.id)) return false; seen.add(m.id); return true; })
+            const filteredMemories = allMems
+                .filter(m => m.mentionedConnections && m.mentionedConnections.includes(connection.id))
                 .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-            setConnectionMemories(memories);
+
+            memories = filteredMemories; // Update the local variable for copilot logic
+            setConnectionMemories(filteredMemories);
         } catch (e) {
+            console.error('Error loading connection memories:', e);
             setConnectionMemories([]);
         }
 
@@ -319,10 +314,36 @@ export default function ConnectionsScreen() {
             synced: false,
         };
 
+        const isFromSaveModal = params.from === 'save_modal';
+        const pendingMemoryId = params.memoryId;
+
         await localStorage.saveConnection(newConn);
+
+        // AUTO-LINK: Link current memory if we came from Save Modal
+        if (pendingMemoryId) {
+            try {
+                const memories = await localStorage.getMemories();
+                const memoryToUpdate = memories.find(m => m.id === pendingMemoryId);
+                if (memoryToUpdate) {
+                    const mentioned = memoryToUpdate.mentionedConnections || [];
+                    if (!mentioned.includes(newConn.id)) {
+                        memoryToUpdate.mentionedConnections = [...mentioned, newConn.id];
+                        await localStorage.saveMemory(memoryToUpdate);
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to auto-link memory:', e);
+            }
+        }
+
         setIsAddModalVisible(false);
         resetAddModal();
         loadConnections();
+
+        if (isFromSaveModal) {
+            router.setParams({ from: undefined, memoryId: undefined, prefillName: undefined });
+            router.replace('/(tabs)');
+        }
     };
 
     return (
@@ -432,7 +453,11 @@ export default function ConnectionsScreen() {
                                             </View>
                                         </View>
                                     ) : (
-                                        <View style={styles.detailsMemoriesList}>
+                                        <ScrollView
+                                            style={styles.detailsMemoriesScroll}
+                                            contentContainerStyle={styles.detailsMemoriesList}
+                                            showsVerticalScrollIndicator={false}
+                                        >
                                             {/* Phase 3.3: Copiloto Relacional block */}
                                             {(copilotSummary || isLoadingCopilot) && (
                                                 <View style={styles.copilotCard}>
@@ -447,7 +472,7 @@ export default function ConnectionsScreen() {
                                                     )}
                                                 </View>
                                             )}
-                                            {connectionMemories.slice(0, 3).map((mem) => (
+                                            {connectionMemories.map((mem) => (
                                                 <TouchableOpacity key={mem.id} style={styles.detailsMemoryCard}>
                                                     <Text style={styles.detailsMemoryEmoji}>{mem.emotionEmoji || '💭'}</Text>
                                                     <View style={styles.detailsMemoryInfo}>
@@ -460,12 +485,7 @@ export default function ConnectionsScreen() {
                                                     </View>
                                                 </TouchableOpacity>
                                             ))}
-                                            {connectionMemories.length > 3 && (
-                                                <TouchableOpacity style={styles.detailsViewAllBtn}>
-                                                    <Text style={styles.detailsViewAllText}>Ver todas</Text>
-                                                </TouchableOpacity>
-                                            )}
-                                        </View>
+                                        </ScrollView>
                                     )}
                                 </>
                             )}
@@ -647,7 +667,8 @@ const styles = StyleSheet.create({
     saveBtnText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
 
     // Details BottomSheet
-    detailsContent: { paddingTop: 12, paddingBottom: 40 },
+    detailsContent: { paddingTop: 12, paddingBottom: 20, maxHeight: '95%' },
+    detailsMemoriesScroll: { flexShrink: 1, width: '100%' },
     detailsHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 24 },
     detailsAvatar: {
         width: 60, height: 60, borderRadius: 30,
@@ -710,7 +731,7 @@ const styles = StyleSheet.create({
     },
 
     // Details - Memory list
-    detailsMemoriesList: { gap: 12 },
+    detailsMemoriesList: { gap: 12, paddingBottom: 80 },
     detailsMemoryCard: {
         flexDirection: 'row', alignItems: 'center', backgroundColor: '#1a1a24',
         padding: 16, borderRadius: 16, gap: 12, borderWidth: 1, borderColor: '#2d2d3a',

@@ -502,8 +502,8 @@ async def transcribe_audio_gemini(audio_base64: str, duration_seconds: Optional[
         logger.error(f"Gemini transcription error: {e}")
         return "", []
 
-async def analyze_emotion(text: str, persona: str = "therapeutic") -> dict:
-    """Analyze emotion using Gemini API - supports multiple emotions, summary, and life areas"""
+async def analyze_emotion(text: str, persona: str = "therapeutic", connections: List[dict] = None) -> dict:
+    """Analyze emotion using Gemini API - supports multiple emotions, summary, life areas, and Phase 3 NER"""
     try:
         # Detect life areas from text
         life_areas = detect_life_areas(text)
@@ -543,7 +543,11 @@ Retorne APENAS um JSON válido com:
   - intensity: intensidade de 1-100
 - summary: um breve resumo de 1-2 frases sobre o conteúdo emocional da memória, escrito de acordo com a persona de escuta ({persona_data['name']})
 - persona_insight: uma reflexão ou pergunta específica baseada na persona de escuta escolhida
+- detected_names: array JSON de nomes próprios e apelidos de pessoas mencionados no texto (ex: ["Emily", "Carlos"]). Se houver uma lista de CONEXÕES EXISTENTES abaixo, priorize identificar esses nomes se mencionados.
 - is_sensitive: booleano (true ou false) - marque como true ESTRITAMENTE SE o conteúdo for criminoso ou indicar perigo iminente (risco de vida claro, intenção real de suicídio, violência física, abuso doméstico). NÃO marque como true para tristeza, luto, dores emocionais do dia a dia ou meros desabafos sem intenção de se machucar. Se for true, ignore a persona e o 'summary' DEVE se tornar um alerta ACOLHEDOR PORÉM FIRME (seja empático para acalmar a pessoa, mas diga claramente que a ação cogitada é errada/perigosa/insana para prevenir danos, e instrua amigavelmente a buscar ajuda médica ou policial urgente).
+
+CONEXÕES EXISTENTES NA CONSTELAÇÃO DO USUÁRIO (Use para ajudar a identificar nomes):
+{json.dumps(connections) if connections else "Nenhuma conexão criada ainda."}
 
 REGRAS RÍGIDAS EXTRAS DA IA (SEGURANÇA E NEUTRALIDADE):
 1. NEUTRALIDADE RELIGIOSA: A IA DEVE ser estritamente laica. JAMAIS mencione Deus, orações, bênçãos, carma ou presuma crenças espirituais do usuário. Fale apenas de resiliência psicológica e força interior.
@@ -560,6 +564,7 @@ Retorne SOMENTE o JSON, sem markdown ou explicações."""
         )
         
         response_text = response.text.strip()
+        print(f"--- GEMINI RESPONSE ---\n{response_text}\n----------------------")
         # Clean up response if wrapped in markdown
         if response_text.startswith("```"):
             response_text = response_text.split("```")[1]
@@ -587,7 +592,8 @@ Retorne SOMENTE o JSON, sem markdown ou explicações."""
             "emotions": emotions_list,
             "summary": summary,
             "persona_insight": result.get("persona_insight", ""),
-            "life_areas": life_areas
+            "life_areas": life_areas,
+            "detected_names": result.get("detected_names", [])
         }
     except Exception as e:
         logger.error(f"Emotion analysis error with Gemini: {e}")
@@ -686,43 +692,35 @@ class EmotionAnalysisResponse(BaseModel):
 
 @api_router.post("/analyze-emotion", response_model=EmotionAnalysisResponse)
 async def analyze_emotion_public(request: EmotionAnalysisRequest):
-    """Public emotion analysis endpoint for local-first approach"""
-    emotion_data = await analyze_emotion(request.text, request.persona or "therapeutic")
+    """Public emotion analysis endpoint for local-first approach (Phase 3 Unified)"""
+    # Use unified internal call
+    emotion_data = await analyze_emotion(
+        request.text, 
+        request.persona or "therapeutic",
+        connections=[c.dict() for c in request.connections] if request.connections else []
+    )
 
-    # ── Phase 3.1: NER ─ safe JSON.parse equivalent ──
-    detected_names: List[str] = []
-    if gemini_client and request.text.strip():
-        try:
-            ner_prompt = (
-                f"Extrai todos os nomes próprios e apelidos de pessoas mencionadas neste relato. "
-                f"Retorna OBRIGATORIAMENTE um array JSON válido e nada mais. "
-                f'Exemplo: ["Emily", "Marcos", "Amor"]. Texto: {request.text}'
-            )
-            ner_response = gemini_client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=[ner_prompt]
-            )
-            raw = ner_response.text.strip()
-            # Strip markdown fences if present
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-                if raw.startswith("json"): raw = raw[4:]
-            if raw.endswith("```"): raw = raw[:-3]
-            parsed = json.loads(raw.strip())
-            if isinstance(parsed, list):
-                detected_names = [n for n in parsed if isinstance(n, str)]
-        except Exception as ner_err:
-            logger.warning(f"NER extraction failed silently: {ner_err}")
-            detected_names = []
-
+    detected_names = emotion_data.get("detected_names", [])
+    
     # ── Phase 3.2: Cross-reference NER names against constellation connections ──
     mentioned_connection_ids: List[str] = []
     if request.connections:
-        lower_names = [n.lower() for n in detected_names]
+        lower_detected = [n.lower() for n in detected_names]
+        text_lower = request.text.lower()
+        
         for conn in request.connections:
-            # Match if the connection name appears in detected names OR raw text
-            if (conn.name.lower() in lower_names or
-                    conn.name.lower() in request.text.lower()):
+            conn_name_lower = conn.name.lower()
+            # Triple check: 
+            # 1. Name is in AI detected list
+            # 2. Connection name is explicitly in raw text
+            # 3. Connection name is a substring of any detected name (e.g. "Mary" in "Mary Jane")
+            is_matched = (
+                conn_name_lower in lower_detected or 
+                conn_name_lower in text_lower or
+                any(conn_name_lower in d for d in lower_detected)
+            )
+            
+            if is_matched:
                 mentioned_connection_ids.append(conn.id)
 
     return EmotionAnalysisResponse(

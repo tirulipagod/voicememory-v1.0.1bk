@@ -710,6 +710,9 @@ export default function RecordScreen() {
 
     try {
       setRecordingState('saving');
+      // Reset NER states
+      setNerMatchedConnections([]);
+      setNerUnknownNames([]);
 
       // Get all current connections to pass to AI for tagging
       const allConnections = await localStorage.getConnections();
@@ -737,6 +740,12 @@ export default function RecordScreen() {
 
         if (response.ok) {
           const data = await response.json();
+          // REDUNDANT DEBUG AND LOGGING
+          console.warn('[NER DEBUG] API SUCCESS', {
+            detected: data.detected_names,
+            matched: data.mentioned_connections
+          });
+
           emotionResult = {
             emotion: data.emotion || 'neutro',
             emoji: data.emotion_emoji || '😐',
@@ -745,14 +754,29 @@ export default function RecordScreen() {
             summary: data.summary || '',
             mentionedConnections: data.mentioned_connections || [],
           };
+
           // Phase 3.2: populate NER modal state
           const detectedNames: string[] = data.detected_names || [];
           const matchedIds: string[] = data.mentioned_connections || [];
-          const matchedConns = allConnections.filter(c => matchedIds.includes(c.id));
+
+          // Triple matching: 
+          // 1. By ID (official from backend)
+          // 2. By Exact Name (fallback)
+          const matchedByNames = allConnections.filter(c =>
+            detectedNames.some(dn => dn.toLowerCase() === c.name.toLowerCase())
+          );
+
+          const matchedConns = allConnections.filter(c =>
+            matchedIds.includes(c.id) || matchedByNames.some(mc => mc.id === c.id)
+          );
+
           const matchedNamesLower = matchedConns.map(c => c.name.toLowerCase());
           const unknownNames = detectedNames.filter(
-            n => !matchedNamesLower.some(mn => mn.includes(n.toLowerCase()) || n.toLowerCase().includes(mn))
+            n => !matchedNamesLower.some(mn => mn.toLowerCase() === n.toLowerCase() || mn.toLowerCase().includes(n.toLowerCase()))
           );
+
+          console.warn('[NER DEBUG] Final State:', { matched: matchedConns.length, unknown: unknownNames.length });
+
           setNerMatchedConnections(matchedConns.map(c => ({ id: c.id, name: c.name, relationship: c.relationship })));
           setNerUnknownNames(unknownNames.slice(0, 3));
         } else {
@@ -791,7 +815,7 @@ export default function RecordScreen() {
         segments: transcriptionSegments.length > 0 ? transcriptionSegments : undefined,
         emotions: emotionResult.emotions,
         summary: emotionResult.summary,
-        mentionedConnections: emotionResult.mentionedConnections,
+        mentionedConnections: [], // FIXED: Memories are no longer auto-linked. Linking is now EXPLICIT.
         createdAt: now,
         updatedAt: now,
         synced: false,
@@ -836,6 +860,9 @@ export default function RecordScreen() {
 
     try {
       setIsSavingText(true);
+      // Reset NER states
+      setNerMatchedConnections([]);
+      setNerUnknownNames([]);
 
       // Get all current connections to pass to AI for tagging
       const allConnections = await localStorage.getConnections();
@@ -1325,7 +1352,6 @@ export default function RecordScreen() {
         </View>
       </Modal>
 
-      {/* Emotion Confirmation Modal */}
       {showEmotionModal && savedMemory && (
         <Modal
           visible={showEmotionModal}
@@ -1340,11 +1366,11 @@ export default function RecordScreen() {
             <View style={styles.emotionModalContent}>
               <ScrollView
                 showsVerticalScrollIndicator={false}
-                contentContainerStyle={{ paddingBottom: 8 }}
+                contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 24, alignItems: 'center' }}
                 style={{ width: '100%' }}
               >
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>✨ Memória salva!</Text>
+                <View style={[styles.modalHeader, { width: '100%', marginTop: 8 }]}>
+                  <Text style={[styles.modalTitle, { color: '#fff' }]}>✨ Memória salva!</Text>
                   <TouchableOpacity onPress={() => {
                     setShowEmotionModal(false);
                     setSavedMemory(null);
@@ -1353,136 +1379,108 @@ export default function RecordScreen() {
                   </TouchableOpacity>
                 </View>
 
-                <Text style={styles.emotionModalSubtitle}>
+                <Text style={[styles.emotionModalSubtitle, { fontSize: 13, marginBottom: 12 }]}>
                   A IA detectou a seguinte emoção principal:
                 </Text>
 
-                <View style={styles.currentEmotionBadge}>
+                <View style={[styles.currentEmotionBadge, { marginBottom: 16 }]}>
                   <Text style={styles.currentEmotionEmoji}>{savedMemory.emotionEmoji}</Text>
                   <Text style={styles.currentEmotionText}>{savedMemory.emotion}</Text>
                 </View>
 
-                {savedMemory.summary && (
-                  <View style={{
-                    marginTop: 12,
-                    padding: 12,
-                    backgroundColor: savedMemory.summary.includes('[ALERTA_SENSIVEL]') ? 'rgba(239, 68, 68, 0.1)' : 'rgba(139, 92, 246, 0.1)',
-                    borderRadius: 12,
-                    borderWidth: 1,
-                    borderColor: savedMemory.summary.includes('[ALERTA_SENSIVEL]') ? 'rgba(239, 68, 68, 0.3)' : 'rgba(139, 92, 246, 0.2)'
-                  }}>
-                    {savedMemory.summary.includes('[ALERTA_SENSIVEL]') && (
-                      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 6 }}>
-                        <Ionicons name="warning" size={16} color="#ef4444" />
-                        <Text style={{ color: '#ef4444', fontWeight: 'bold', fontSize: 13 }}>Aviso de Segurança</Text>
-                      </View>
-                    )}
-                    <Text style={{ color: '#e5e7eb', fontSize: 14, lineHeight: 20, fontStyle: 'italic' }}>
-                      {savedMemory.summary.replace('[ALERTA_SENSIVEL]', '').trim()}
-                    </Text>
-                  </View>
-                )}
-
+                {/* 1. Alternative Emotions Row (Side-by-side) */}
                 {savedMemory.emotions && savedMemory.emotions.length > 1 && (
                   <View style={styles.emotionSuggestionsContainer}>
-                    <Text style={styles.emotionSuggestionsTitle}>Você prefere alguma destas como principal?</Text>
-                    <View style={styles.emotionOptions}>
+                    <View style={styles.emotionOptionsRow}>
                       {savedMemory.emotions.slice(0, 3).map((em, idx) => (
                         <TouchableOpacity
                           key={idx}
-                          style={[styles.emotionOptionBtn, savedMemory.emotion === em.emotion && styles.emotionOptionActive]}
+                          style={[styles.emotionOptionSmall, savedMemory.emotion === em.emotion && styles.emotionOptionActive]}
                           onPress={async () => {
                             const updated = { ...savedMemory, emotion: em.emotion, emotionEmoji: em.emoji };
                             await localStorage.saveMemory(updated);
                             setSavedMemory(updated);
-                            syncWithDrive().catch(e => console.log(e));
                           }}
                         >
-                          <Text style={styles.emotionOptionEmoji}>{em.emoji}</Text>
-                          <View>
-                            <Text style={[styles.emotionOptionText, savedMemory.emotion === em.emotion && styles.emotionOptionTextActive]}>
-                              {em.emotion}
-                            </Text>
-                            <Text style={styles.emotionIntensity}>{em.intensity}% intenso</Text>
-                          </View>
+                          <Text style={styles.emotionOptionEmojiSmall}>{em.emoji}</Text>
+                          <Text style={[styles.emotionOptionTextSmall, savedMemory.emotion === em.emotion && styles.emotionOptionTextActive]} numberOfLines={1}>
+                            {em.emotion}
+                          </Text>
                         </TouchableOpacity>
                       ))}
                     </View>
                   </View>
                 )}
 
-                {/* Phase 3.2: NER Cross-referencing – Matched connections (link prompt) */}
-                {nerMatchedConnections.length > 0 && (
-                  <View style={styles.nerSection}>
-                    {nerMatchedConnections.map(conn => (
-                      <View key={conn.id} style={styles.nerCard}>
-                        <View style={styles.nerCardIcon}>
-                          <Ionicons name="people" size={18} color="#8b5cf6" />
-                        </View>
-                        <Text style={styles.nerCardText}>
-                          Você mencionou <Text style={styles.nerHighlight}>{conn.name}</Text>. Deseja vincular esta memória à constelação dessa pessoa?
-                        </Text>
-                        <View style={styles.nerCardActions}>
-                          <TouchableOpacity
-                            style={[styles.nerBtn, styles.nerBtnYes]}
-                            onPress={async () => {
-                              if (savedMemory) {
-                                const updated = {
-                                  ...savedMemory,
-                                  mentionedConnections: [...(savedMemory.mentionedConnections || []), conn.id].filter((v, i, a) => a.indexOf(v) === i),
-                                };
-                                await localStorage.saveMemory(updated);
-                                setSavedMemory(updated);
-                              }
-                              setNerMatchedConnections(prev => prev.filter(c => c.id !== conn.id));
-                            }}
-                          >
-                            <Text style={styles.nerBtnText}>Sim</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            style={[styles.nerBtn, styles.nerBtnNo]}
-                            onPress={() => setNerMatchedConnections(prev => prev.filter(c => c.id !== conn.id))}
-                          >
-                            <Text style={[styles.nerBtnText, { color: '#9ca3af' }]}>Não</Text>
-                          </TouchableOpacity>
-                        </View>
+                {/* 2. Summary/Warning Box */}
+                {savedMemory.summary && (
+                  <View style={[styles.summaryBox, {
+                    backgroundColor: savedMemory.summary.includes('[ALERTA_SENSIVEL]') ? 'rgba(239, 68, 68, 0.1)' : 'rgba(139, 92, 246, 0.08)',
+                    borderColor: savedMemory.summary.includes('[ALERTA_SENSIVEL]') ? 'rgba(239, 68, 68, 0.3)' : 'rgba(139, 92, 246, 0.2)'
+                  }]}>
+                    {savedMemory.summary.includes('[ALERTA_SENSIVEL]') && (
+                      <View style={styles.safetyWarningHeader}>
+                        <Ionicons name="warning" size={16} color="#ef4444" />
+                        <Text style={styles.safetyWarningTitle}>Aviso de Segurança</Text>
                       </View>
-                    ))}
+                    )}
+                    <Text style={styles.summaryBoxText}>
+                      {savedMemory.summary.replace('[ALERTA_SENSIVEL]', '').trim()}
+                    </Text>
                   </View>
                 )}
 
-                {/* Phase 3.2: NER Cross-referencing – Unknown names (create connection prompt) */}
-                {nerUnknownNames.length > 0 && (
-                  <View style={styles.nerSection}>
-                    {nerUnknownNames.map(name => (
-                      <View key={name} style={[styles.nerCard, styles.nerCardNew]}>
-                        <View style={[styles.nerCardIcon, { backgroundColor: 'rgba(16, 185, 129, 0.15)' }]}>
-                          <Ionicons name="person-add-outline" size={18} color="#10b981" />
+                {/* 3. NER Connections Section (At the bottom, leaner) */}
+                {(nerMatchedConnections.length > 0 || nerUnknownNames.length > 0) && (
+                  <View style={styles.nerSectionLean}>
+                    <Text style={styles.nerTitleLean}>✨ Novas conexões detectadas!</Text>
+
+                    {nerMatchedConnections.map(conn => (
+                      <View key={conn.id} style={styles.nerCardLean}>
+                        <Ionicons name="people" size={18} color="#8b5cf6" />
+                        <View style={{ flex: 1, marginLeft: 8 }}>
+                          <Text style={styles.nerPromptLean}>Vincular esta memória à <Text style={{ fontWeight: 'bold' }}>{conn.name}</Text>?</Text>
                         </View>
-                        <Text style={styles.nerCardText}>
-                          Você mencionou <Text style={[styles.nerHighlight, { color: '#10b981' }]}>{name}</Text>. Deseja criar uma nova conexão na sua constelação para essa pessoa?
-                        </Text>
-                        <View style={styles.nerCardActions}>
-                          <TouchableOpacity
-                            style={[styles.nerBtn, { backgroundColor: 'rgba(16, 185, 129, 0.2)', borderColor: 'rgba(16, 185, 129, 0.5)' }]}
-                            onPress={() => {
-                              setNerUnknownNames(prev => prev.filter(n => n !== name));
-                              setShowEmotionModal(false);
-                              setSavedMemory(null);
-                              // Navigate to connections tab with a pre-filled name hint
-                              // @ts-ignore
-                              router.push({ pathname: '/(tabs)/connections', params: { prefillName: name } as any });
-                            }}
-                          >
-                            <Text style={[styles.nerBtnText, { color: '#10b981' }]}>Criar</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            style={[styles.nerBtn, styles.nerBtnNo]}
-                            onPress={() => setNerUnknownNames(prev => prev.filter(n => n !== name))}
-                          >
-                            <Text style={[styles.nerBtnText, { color: '#9ca3af' }]}>Ignorar</Text>
-                          </TouchableOpacity>
+                        <TouchableOpacity style={styles.nerQuickLinkBtn} onPress={async () => {
+                          if (savedMemory) {
+                            const updated = {
+                              ...savedMemory,
+                              mentionedConnections: [...(savedMemory.mentionedConnections || []), conn.id].filter((v, i, a) => a.indexOf(v) === i),
+                            };
+                            await localStorage.saveMemory(updated);
+                            setSavedMemory(updated);
+                          }
+                          setNerMatchedConnections(prev => prev.filter(c => c.id !== conn.id));
+                        }}>
+                          <Text style={styles.nerQuickLinkText}>Vincular</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+
+                    {nerUnknownNames.map((name, index) => (
+                      <View key={`unknown-${index}`} style={[styles.nerCardLean, { borderColor: 'rgba(16, 185, 129, 0.2)' }]}>
+                        <Ionicons name="person-add" size={18} color="#10b981" />
+                        <View style={{ flex: 1, marginLeft: 8 }}>
+                          <Text style={styles.nerPromptLean}>Criar conexão para <Text style={{ fontWeight: 'bold' }}>{name}</Text>?</Text>
                         </View>
+                        <TouchableOpacity
+                          style={[styles.nerQuickLinkBtn, { backgroundColor: 'rgba(16, 185, 129, 0.15)' }]}
+                          onPress={() => {
+                            // Don't reset savedMemory so it's still there when we return
+                            setNerUnknownNames(prev => prev.filter(n => n !== name));
+                            // Navigate with returnTo param
+                            router.push({
+                              pathname: '/(tabs)/connections',
+                              params: {
+                                prefillName: name,
+                                from: 'save_modal',
+                                memoryId: savedMemory.id
+                              } as any
+                            });
+                          }}
+                        >
+                          <Text style={[styles.nerQuickLinkText, { color: '#10b981' }]}>Criar</Text>
+                        </TouchableOpacity>
                       </View>
                     ))}
                   </View>
@@ -1503,15 +1501,17 @@ export default function RecordScreen() {
                   <TouchableOpacity
                     style={[styles.emotionContinueBtn, { flex: 1 }]}
                     onPress={() => {
+                      const id = savedMemory.id;
                       setShowEmotionModal(false);
                       setSavedMemory(null);
                       setNerMatchedConnections([]);
                       setNerUnknownNames([]);
+                      // Ver memória (singular) - navega para a memória específica
                       // @ts-ignore
-                      router.push('/memories_history');
+                      router.push(`/memory/${id}`);
                     }}
                   >
-                    <Text style={styles.emotionContinueText}>Ver memórias</Text>
+                    <Text style={styles.emotionContinueText}>Ver memória</Text>
                   </TouchableOpacity>
                 </View>
               </ScrollView>
@@ -1526,31 +1526,104 @@ export default function RecordScreen() {
 
 const styles = StyleSheet.create({
   // ── Phase 3.2 NER cards ──
-  nerSection: { marginTop: 12, gap: 10 },
-  nerCard: {
-    backgroundColor: 'rgba(139, 92, 246, 0.08)',
-    borderWidth: 1, borderColor: 'rgba(139, 92, 246, 0.25)',
-    borderRadius: 14, padding: 14, gap: 10,
+  summaryBox: {
+    marginTop: 12,
+    padding: 14,
+    borderRadius: 16,
+    borderWidth: 1,
+    width: '100%',
+    marginBottom: 8,
   },
-  nerCardNew: {
-    backgroundColor: 'rgba(16, 185, 129, 0.06)',
-    borderColor: 'rgba(16, 185, 129, 0.25)',
+  safetyWarningHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    gap: 6
   },
-  nerCardIcon: {
-    width: 32, height: 32, borderRadius: 16,
+  safetyWarningTitle: {
+    color: '#ef4444',
+    fontWeight: 'bold',
+    fontSize: 13
+  },
+  summaryBoxText: {
+    color: '#e5e7eb',
+    fontSize: 14,
+    lineHeight: 20,
+    fontStyle: 'italic'
+  },
+  emotionOptionsRow: {
+    flexDirection: 'row',
+    width: '100%',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginTop: 4,
+  },
+  emotionOptionSmall: {
+    flex: 1,
+    backgroundColor: '#1a1a24',
+    paddingVertical: 10,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#2d2d3a',
+  },
+  emotionOptionEmojiSmall: {
+    fontSize: 20,
+    marginBottom: 4,
+  },
+  emotionOptionTextSmall: {
+    fontSize: 11,
+    color: '#9ca3af',
+    fontFamily: 'Outfit-Bold',
+    textTransform: 'capitalize',
+  },
+  nerSectionLean: {
+    marginTop: 16,
+    width: '100%',
+    gap: 8,
+    marginBottom: 16,
+  },
+  nerTitleLean: {
+    color: '#9ca3af',
+    fontSize: 13,
+    fontFamily: 'Outfit-Bold',
+    marginBottom: 4,
+    marginLeft: 4,
+  },
+  nerCardLean: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderRadius: 12,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(139, 92, 246, 0.2)',
+  },
+  nerPromptLean: {
+    color: '#fff',
+    fontSize: 13,
+    fontFamily: 'Outfit-Regular',
+  },
+  nerQuickLinkBtn: {
     backgroundColor: 'rgba(139, 92, 246, 0.15)',
-    alignItems: 'center', justifyContent: 'center', alignSelf: 'flex-start',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
   },
-  nerCardText: { color: '#d1d5db', fontSize: 13, lineHeight: 19 },
-  nerHighlight: { color: '#a78bfa', fontWeight: '700' },
-  nerCardActions: { flexDirection: 'row', gap: 10 },
-  nerBtn: {
-    flex: 1, paddingVertical: 9, alignItems: 'center', borderRadius: 10,
-    borderWidth: 1, borderColor: 'rgba(139, 92, 246, 0.4)',
+  nerQuickLinkText: {
+    color: '#8b5cf6',
+    fontSize: 12,
+    fontFamily: 'Outfit-Bold',
   },
-  nerBtnYes: { backgroundColor: 'rgba(139, 92, 246, 0.2)' },
-  nerBtnNo: { backgroundColor: 'rgba(55, 65, 81, 0.4)', borderColor: 'rgba(75, 85, 99, 0.4)' },
-  nerBtnText: { color: '#a78bfa', fontWeight: '600', fontSize: 13 },
+  nerCardIconContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(139, 92, 246, 0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
   container: {
     flex: 1,
@@ -2043,9 +2116,10 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#fff',
+    fontSize: 16,
+    fontFamily: 'Outfit-Bold',
+    color: '#9ca3af',
+    flex: 1,
   },
   modalTextInput: {
     backgroundColor: '#1a1a24',
@@ -2133,9 +2207,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#12121a',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    padding: 24,
-    paddingBottom: Platform.OS === 'ios' ? 40 : 24,
-    maxHeight: '90%',
+    maxHeight: '85%',
     width: '100%',
   },
   emotionModalSubtitle: {
@@ -2147,22 +2219,23 @@ const styles = StyleSheet.create({
   currentEmotionBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(139, 92, 246, 0.15)',
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 20,
+    backgroundColor: 'rgba(139, 92, 246, 0.12)',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#8b5cf6',
-    marginBottom: 24,
+    borderColor: 'rgba(139, 92, 246, 0.3)',
+    marginBottom: 16,
     justifyContent: 'center',
+    alignSelf: 'center',
   },
   currentEmotionEmoji: {
-    fontSize: 32,
-    marginRight: 12,
+    fontSize: 26,
+    marginRight: 10,
   },
   currentEmotionText: {
-    fontSize: 20,
-    fontWeight: 'bold',
+    fontSize: 18,
+    fontFamily: 'Outfit-Bold',
     color: '#fff',
     textTransform: 'capitalize',
   },
