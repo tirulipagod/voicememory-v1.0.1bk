@@ -10,15 +10,28 @@ import Svg, { Defs, RadialGradient, Stop, Circle as SvgCircle } from 'react-nati
 const { width, height } = Dimensions.get('window');
 const MAP_WIDTH = width * 3;
 const MAP_HEIGHT = height * 3;
-const BASE_NODE_SIZE = 56;
-const MAX_NODE_SIZE = 92;
-const MEMORY_SIZE_FACTOR = 4;
+
+// ── Pillar 2: Mass Hierarchy constants ────────────────────────────────
+const SUN_SIZE = 110;
+const MAX_PLANET_SIZE = Math.floor(SUN_SIZE * 0.50); // 55px hard cap
+const BASE_NODE_SIZE = 36;
+const MEMORY_SIZE_FACTOR = 3;
 const ORBIT_RADII = [140, 260, 390, 520];
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 2.5;
 const DEFAULT_ZOOM = 0.85;
 const INITIAL_PAN_X = -(MAP_WIDTH - width) / 2;
 const INITIAL_PAN_Y = -(MAP_HEIGHT - height) / 2;
+
+// ── Pillar 1: Deterministic PRNG for star positions ──────────────────
+function mulberry32(seed: number) {
+    return function () {
+        seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+        let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
 
 const EMOTION_GLOW: Record<string, string> = {
     feliz: '#facc15', animado: '#f97316', grato: '#10b981',
@@ -52,7 +65,7 @@ function orbitFor(date: string | null) {
 }
 
 function nodeSize(n: number) {
-    return Math.min(BASE_NODE_SIZE + n * MEMORY_SIZE_FACTOR, MAX_NODE_SIZE);
+    return Math.min(BASE_NODE_SIZE + n * MEMORY_SIZE_FACTOR, MAX_PLANET_SIZE);
 }
 
 function glowColor(emotion: string | null) {
@@ -65,41 +78,44 @@ function pinchDist(t0: any, t1: any) {
     return Math.hypot(t0.pageX - t1.pageX, t0.pageY - t1.pageY);
 }
 
-// ── Planet Glow (SVG RadialGradient) ──────────────────────────────
+// ── Planet / Sun Glow ─────────────────────────────────────────────────
 let _gid = 0;
-const PlanetGlow = memo(({ color, size }: { color: string; size: number }) => {
+const PlanetGlow = memo(({ color, size, isSun }: { color: string; size: number; isSun?: boolean }) => {
     const id = useRef(`g${_gid++}`).current;
     const pulse = useRef(new Animated.Value(0)).current;
-
     useEffect(() => {
         const a = Animated.loop(Animated.sequence([
-            Animated.timing(pulse, { toValue: 1, duration: 2400, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-            Animated.timing(pulse, { toValue: 0, duration: 2400, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+            Animated.timing(pulse, { toValue: 1, duration: isSun ? 1800 : 2400, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+            Animated.timing(pulse, { toValue: 0, duration: isSun ? 1800 : 2400, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
         ]));
         a.start();
         return () => a.stop();
     }, []);
-
-    const cs = size * 4; // corona canvas
+    const cs = size * (isSun ? 5 : 4);
     const half = cs / 2;
-    const opacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.5, 1.0] });
-
+    const opacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [isSun ? 0.6 : 0.5, 1.0] });
     return (
-        <Animated.View
-            pointerEvents="none"
-            style={{ position: 'absolute', width: cs, height: cs, opacity }}
-        >
+        <Animated.View pointerEvents="none" style={{ position: 'absolute', width: cs, height: cs, opacity }}>
             <Svg width={cs} height={cs}>
                 <Defs>
-                    {/* No dark gap: glow peaks at planet edge (~25% radius), fades outward */}
                     <RadialGradient id={id} cx="50%" cy="50%" r="50%">
-                        <Stop offset="0%" stopColor={color} stopOpacity="0.6" />
-                        <Stop offset="15%" stopColor={color} stopOpacity="0.85" />
-                        <Stop offset="25%" stopColor={color} stopOpacity="1.0" />
-                        <Stop offset="40%" stopColor={color} stopOpacity="0.5" />
-                        <Stop offset="62%" stopColor={color} stopOpacity="0.15" />
-                        <Stop offset="82%" stopColor={color} stopOpacity="0.04" />
-                        <Stop offset="100%" stopColor={color} stopOpacity="0" />
+                        {isSun ? [
+                            <Stop key="s1" offset="0%" stopColor={color} stopOpacity="0.7" />,
+                            <Stop key="s2" offset="18%" stopColor={color} stopOpacity="1.0" />,
+                            <Stop key="s3" offset="28%" stopColor={color} stopOpacity="1.0" />,
+                            <Stop key="s4" offset="48%" stopColor={color} stopOpacity="0.55" />,
+                            <Stop key="s5" offset="70%" stopColor={color} stopOpacity="0.18" />,
+                            <Stop key="s6" offset="88%" stopColor={color} stopOpacity="0.05" />,
+                            <Stop key="s7" offset="100%" stopColor={color} stopOpacity="0" />
+                        ] : [
+                            <Stop key="p1" offset="0%" stopColor={color} stopOpacity="0.6" />,
+                            <Stop key="p2" offset="15%" stopColor={color} stopOpacity="0.85" />,
+                            <Stop key="p3" offset="25%" stopColor={color} stopOpacity="1.0" />,
+                            <Stop key="p4" offset="40%" stopColor={color} stopOpacity="0.5" />,
+                            <Stop key="p5" offset="62%" stopColor={color} stopOpacity="0.15" />,
+                            <Stop key="p6" offset="82%" stopColor={color} stopOpacity="0.04" />,
+                            <Stop key="p7" offset="100%" stopColor={color} stopOpacity="0" />
+                        ]}
                     </RadialGradient>
                 </Defs>
                 <SvgCircle cx={half} cy={half} r={half} fill={`url(#${id})`} />
@@ -108,7 +124,7 @@ const PlanetGlow = memo(({ color, size }: { color: string; size: number }) => {
     );
 });
 
-// ── Zoom Indicator ─────────────────────────────────────────────────
+// ── Zoom Badge ────────────────────────────────────────────────────────
 const ZoomBadge = memo(({ anim }: { anim: Animated.Value }) => {
     const [label, setLabel] = useState(`${Math.round(DEFAULT_ZOOM * 100)}%`);
     useEffect(() => {
@@ -123,55 +139,80 @@ const ZoomBadge = memo(({ anim }: { anim: Animated.Value }) => {
     );
 });
 
-// ── Main Component ─────────────────────────────────────────────────
+// ── Pillar 1: Star Field (rendered inside parallax layer) ─────────────
+const StarField = memo(() => {
+    const stars = useMemo(() => {
+        const rand = mulberry32(7919); // prime seed for stable layout
+        return Array.from({ length: 140 }, (_, i) => ({
+            key: i,
+            x: rand() * MAP_WIDTH,
+            y: rand() * MAP_HEIGHT,
+            size: 0.8 + rand() * 2.2,
+            opacity: 0.12 + rand() * 0.68,
+        }));
+    }, []);
+    return (
+        <View style={StyleSheet.absoluteFill}>
+            {stars.map(s => (
+                <View
+                    key={s.key}
+                    pointerEvents="none"
+                    style={{
+                        position: 'absolute',
+                        left: s.x,
+                        top: s.y,
+                        width: s.size,
+                        height: s.size,
+                        borderRadius: s.size / 2,
+                        backgroundColor: '#ffffff',
+                        opacity: s.opacity,
+                    }}
+                />
+            ))}
+        </View>
+    );
+});
+
+// ── Main Component ────────────────────────────────────────────────────
 export default function ConnectionsMap({ connections, metadata, onNodePress, onAddPress }: Props) {
-    // Ref-based state (no re-render per frame)
     const panX = useRef(INITIAL_PAN_X);
     const panY = useRef(INITIAL_PAN_Y);
     const zoom = useRef(DEFAULT_ZOOM);
-
     const panAnim = useRef(new Animated.ValueXY({ x: INITIAL_PAN_X, y: INITIAL_PAN_Y })).current;
     const zoomAnim = useRef(new Animated.Value(DEFAULT_ZOOM)).current;
 
+    // Pillar 1: Parallax = 25% of main pan speed
+    const parallaxX = useRef(Animated.multiply(panAnim.x, 0.25)).current;
+    const parallaxY = useRef(Animated.multiply(panAnim.y, 0.25)).current;
+
     const centerX = MAP_WIDTH / 2;
     const centerY = MAP_HEIGHT / 2;
+    const sunHalf = SUN_SIZE / 2;
 
-    // Gesture refs
     const isPinching = useRef(false);
     const pinchDist0 = useRef<number | null>(null);
     const pinchCenter = useRef({ x: 0, y: 0 });
     const lastTouch = useRef({ x: 0, y: 0 });
     const lastTap = useRef(0);
 
-    // ── Clamp: correct bounds for RN center-based scale ──
-    // RN scales around (MAP_WIDTH/2, MAP_HEIGHT/2).
-    // Left screen edge = halfW*(1-z) + tx  → must be ≤ 0  → tx ≤ halfW*(z-1)
-    // Right screen edge = halfW*(1+z) + tx → must be ≥ width → tx ≥ width - halfW*(1+z)
     function clamp(x: number, y: number, z: number) {
-        const halfW = MAP_WIDTH / 2;
-        const halfH = MAP_HEIGHT / 2;
-        const minX = width - halfW * (1 + z);
-        const maxX = halfW * (z - 1);
-        const minY = height - halfH * (1 + z);
-        const maxY = halfH * (z - 1);
+        const halfW = MAP_WIDTH / 2, halfH = MAP_HEIGHT / 2;
+        const minX = width - halfW * (1 + z), maxX = halfW * (z - 1);
+        const minY = height - halfH * (1 + z), maxY = halfH * (z - 1);
         return {
             x: minX > maxX ? INITIAL_PAN_X : Math.min(maxX, Math.max(minX, x)),
             y: minY > maxY ? INITIAL_PAN_Y : Math.min(maxY, Math.max(minY, y)),
         };
     }
 
-    // ── Center constellation ──
     const centerMap = useCallback(() => {
-        panX.current = INITIAL_PAN_X;
-        panY.current = INITIAL_PAN_Y;
-        zoom.current = DEFAULT_ZOOM;
+        panX.current = INITIAL_PAN_X; panY.current = INITIAL_PAN_Y; zoom.current = DEFAULT_ZOOM;
         Animated.parallel([
             Animated.spring(panAnim, { toValue: { x: INITIAL_PAN_X, y: INITIAL_PAN_Y }, useNativeDriver: false, friction: 7 }),
             Animated.spring(zoomAnim, { toValue: DEFAULT_ZOOM, useNativeDriver: false, friction: 7 }),
         ]).start();
     }, []);
 
-    // ── PanResponder ──
     const responder = useRef(PanResponder.create({
         onStartShouldSetPanResponder: () => false,
         onStartShouldSetPanResponderCapture: () => false,
@@ -179,96 +220,60 @@ export default function ConnectionsMap({ connections, metadata, onNodePress, onA
             (e.nativeEvent.touches as any[]).length >= 2 || Math.abs(g.dx) > 4 || Math.abs(g.dy) > 4,
         onMoveShouldSetPanResponderCapture: (e, g) =>
             (e.nativeEvent.touches as any[]).length >= 2 || Math.abs(g.dx) > 4 || Math.abs(g.dy) > 4,
-
         onPanResponderGrant: (e) => {
-            isPinching.current = false;
-            pinchDist0.current = null;
+            isPinching.current = false; pinchDist0.current = null;
             const t = (e.nativeEvent.touches as any[])[0];
             lastTouch.current = { x: t?.pageX ?? 0, y: t?.pageY ?? 0 };
         },
-
         onPanResponderMove: (e) => {
             const touches = e.nativeEvent.touches as any[];
-
             if (touches.length >= 2) {
                 const dist = pinchDist(touches[0], touches[1]);
-
                 if (!isPinching.current) {
-                    // First frame of pinch — lock center, establish baseline distance
                     isPinching.current = true;
-                    pinchCenter.current = {
-                        x: (touches[0].pageX + touches[1].pageX) / 2,
-                        y: (touches[0].pageY + touches[1].pageY) / 2,
-                    };
-                    pinchDist0.current = dist;
-                    return;
+                    pinchCenter.current = { x: (touches[0].pageX + touches[1].pageX) / 2, y: (touches[0].pageY + touches[1].pageY) / 2 };
+                    pinchDist0.current = dist; return;
                 }
-
                 if (pinchDist0.current && pinchDist0.current > 0) {
-                    const delta = dist / pinchDist0.current;
-                    const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom.current * delta));
-
-                    // ── CORRECT zoom anchor formula for center-based scale ──
-                    // React Native scales around (MAP_WIDTH/2, MAP_HEIGHT/2).
-                    // For pinch point (pc.x, pc.y) to stay fixed:
-                    //   newPanX = (pc.x - halfW) * (1 - ratio) + panX * ratio
-                    const halfW = MAP_WIDTH / 2;
-                    const halfH = MAP_HEIGHT / 2;
+                    const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom.current * (dist / pinchDist0.current)));
+                    const halfW = MAP_WIDTH / 2, halfH = MAP_HEIGHT / 2;
                     const ratio = newZoom / zoom.current;
-                    const rawX = (pinchCenter.current.x - halfW) * (1 - ratio) + panX.current * ratio;
-                    const rawY = (pinchCenter.current.y - halfH) * (1 - ratio) + panY.current * ratio;
-                    const { x, y } = clamp(rawX, rawY, newZoom);
-
-                    zoom.current = newZoom;
-                    panX.current = x;
-                    panY.current = y;
-                    pinchDist0.current = dist; // incremental baseline
-                    panAnim.setValue({ x, y });
-                    zoomAnim.setValue(newZoom);
+                    const { x, y } = clamp(
+                        (pinchCenter.current.x - halfW) * (1 - ratio) + panX.current * ratio,
+                        (pinchCenter.current.y - halfH) * (1 - ratio) + panY.current * ratio,
+                        newZoom
+                    );
+                    zoom.current = newZoom; panX.current = x; panY.current = y;
+                    pinchDist0.current = dist;
+                    panAnim.setValue({ x, y }); zoomAnim.setValue(newZoom);
                 }
             } else {
-                // Single finger pan
                 if (isPinching.current) {
-                    // Transitioning from pinch to single finger — reset tracking
-                    isPinching.current = false;
-                    pinchDist0.current = null;
-                    lastTouch.current = { x: touches[0]?.pageX ?? 0, y: touches[0]?.pageY ?? 0 };
-                    return;
+                    isPinching.current = false; pinchDist0.current = null;
+                    lastTouch.current = { x: touches[0]?.pageX ?? 0, y: touches[0]?.pageY ?? 0 }; return;
                 }
-
-                const tx = touches[0]?.pageX ?? 0;
-                const ty = touches[0]?.pageY ?? 0;
-                const dx = tx - lastTouch.current.x;
-                const dy = ty - lastTouch.current.y;
+                const tx = touches[0]?.pageX ?? 0, ty = touches[0]?.pageY ?? 0;
+                const dx = tx - lastTouch.current.x, dy = ty - lastTouch.current.y;
                 lastTouch.current = { x: tx, y: ty };
-
                 const { x, y } = clamp(panX.current + dx, panY.current + dy, zoom.current);
-                panX.current = x;
-                panY.current = y;
+                panX.current = x; panY.current = y;
                 panAnim.setValue({ x, y });
             }
         },
-
-        onPanResponderRelease: () => {
-            isPinching.current = false;
-            pinchDist0.current = null;
-        },
+        onPanResponderRelease: () => { isPinching.current = false; pinchDist0.current = null; },
     })).current;
 
-    // ── Double-tap to center ──
     const handleMapTap = () => {
         const now = Date.now();
         if (now - lastTap.current < 350) centerMap();
         lastTap.current = now;
     };
 
-    // ── Node layout (relational physics) ──
     const layout = useMemo(() => {
         const rings: Record<number, string[]> = { 0: [], 1: [], 2: [], 3: [] };
         const mmap: Record<string, ConnectionMetadata> = {};
         metadata.forEach(m => { mmap[m.connectionId] = m; });
         connections.forEach(c => rings[orbitFor(mmap[c.id]?.lastInteractionDate ?? null)].push(c.id));
-
         const pos: Record<string, { x: number; y: number; size: number; color: string }> = {};
         for (let r = 0; r <= 3; r++) {
             const ids = rings[r];
@@ -292,20 +297,33 @@ export default function ConnectionsMap({ connections, metadata, onNodePress, onA
 
     return (
         <View style={S.container}>
+            {/* ── Pillar 1: Deep Space Parallax Star Layer ─────────── */}
+            <Animated.View
+                pointerEvents="none"
+                style={{
+                    position: 'absolute',
+                    width: MAP_WIDTH,
+                    height: MAP_HEIGHT,
+                    transform: [{ translateX: parallaxX }, { translateY: parallaxY }],
+                }}
+            >
+                <StarField />
+            </Animated.View>
+
+            {/* ── Main Constellation Map ────────────────────────────── */}
             <Animated.View
                 style={[S.map, { transform: [{ translateX: panAnim.x }, { translateY: panAnim.y }, { scale: zoomAnim }] }]}
                 {...responder.panHandlers}
             >
-                {/* Background double-tap catcher */}
                 <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={handleMapTap} />
 
-                {/* Orbit rings */}
+                {/* Orbit rings (subtle) */}
                 {ORBIT_RADII.map((r, i) => (
                     <View key={i} pointerEvents="none" style={{
                         position: 'absolute', left: centerX - r, top: centerY - r,
                         width: r * 2, height: r * 2, borderRadius: r,
                         borderWidth: StyleSheet.hairlineWidth,
-                        borderColor: `rgba(139,92,246,${0.10 + i * 0.025})`,
+                        borderColor: `rgba(139,92,246,${0.07 + i * 0.018})`,
                     }} />
                 ))}
 
@@ -314,24 +332,31 @@ export default function ConnectionsMap({ connections, metadata, onNodePress, onA
                     const p = layout[c.id];
                     if (!p) return null;
                     const nx = p.x + p.size / 2, ny = p.y + p.size / 2;
-                    const dx = nx - centerX, dy = ny - centerY;
-                    const len = Math.hypot(dx, dy);
-                    const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+                    const len = Math.hypot(nx - centerX, ny - centerY);
+                    const angle = Math.atan2(ny - centerY, nx - centerX) * 180 / Math.PI;
                     return (
                         <View key={`l-${c.id}`} pointerEvents="none" style={{
                             position: 'absolute', left: centerX, top: centerY - 0.5,
-                            width: len, height: 1, backgroundColor: p.color, opacity: 0.12,
+                            width: len, height: 1, backgroundColor: p.color, opacity: 0.10,
                             transformOrigin: '0% 50%', transform: [{ rotate: `${angle}deg` }],
                         }} />
                     );
                 })}
 
-                {/* Center (Você) */}
-                <View style={[S.central, { left: centerX - 45, top: centerY - 45 }]} pointerEvents="none">
-                    <PlanetGlow color="#8b5cf6" size={90} />
-                    <Ionicons name="person" size={42} color="#fff" />
+                {/* ── Pillar 2: Sun — You ───────────────────────────── */}
+                <View
+                    style={{ position: 'absolute', left: centerX - sunHalf, top: centerY - sunHalf, width: SUN_SIZE, height: SUN_SIZE, alignItems: 'center', justifyContent: 'center', zIndex: 10 }}
+                    pointerEvents="none"
+                >
+                    <PlanetGlow color="#a78bfa" size={SUN_SIZE} isSun={true} />
+                    <View style={S.sunCore}>
+                        <Ionicons name="person" size={46} color="#fff" />
+                    </View>
                 </View>
-                <Text style={[S.nodeLabel, { left: centerX - 50, top: centerY + 54, textAlign: 'center', width: 100 }]} pointerEvents="none">
+                <Text
+                    style={[S.nodeLabel, { left: centerX - 50, top: centerY + sunHalf + 10, textAlign: 'center', width: 100 }]}
+                    pointerEvents="none"
+                >
                     Você
                 </Text>
 
@@ -357,7 +382,7 @@ export default function ConnectionsMap({ connections, metadata, onNodePress, onA
                                 </View>
                                 {c.signatureMemoryId && (
                                     <View style={S.badge}>
-                                        <Ionicons name="leaf" size={10} color="#fff" />
+                                        <Ionicons name="leaf" size={9} color="#fff" />
                                     </View>
                                 )}
                             </View>
@@ -370,15 +395,12 @@ export default function ConnectionsMap({ connections, metadata, onNodePress, onA
 
             {/* HUD */}
             <ZoomBadge anim={zoomAnim} />
-
             <TouchableOpacity style={S.centerBtn} onPress={centerMap} activeOpacity={0.8}>
                 <Ionicons name="locate-outline" size={22} color="#a78bfa" />
             </TouchableOpacity>
-
             <TouchableOpacity style={S.fab} onPress={onAddPress} activeOpacity={0.85}>
                 <Ionicons name="add" size={32} color="#fff" />
             </TouchableOpacity>
-
             <View style={S.tooltip} pointerEvents="none">
                 <Ionicons name="hand-left-outline" size={14} color="#d1d5db" />
                 <Text style={S.tooltipText}>Arraste  ·  Pinça para zoom  ·  2× para centrar</Text>
@@ -390,9 +412,13 @@ export default function ConnectionsMap({ connections, metadata, onNodePress, onA
 const S = StyleSheet.create({
     container: { flex: 1, overflow: 'hidden', backgroundColor: '#0a0a0f' },
     map: { width: MAP_WIDTH, height: MAP_HEIGHT },
-    central: {
-        position: 'absolute', width: 90, height: 90, borderRadius: 45,
-        backgroundColor: '#8b5cf6', alignItems: 'center', justifyContent: 'center', zIndex: 10,
+    sunCore: {
+        width: SUN_SIZE, height: SUN_SIZE, borderRadius: SUN_SIZE / 2,
+        backgroundColor: '#7c3aed',
+        alignItems: 'center', justifyContent: 'center',
+        borderWidth: 3, borderColor: '#c4b5fd',
+        shadowColor: '#a78bfa', shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.9, shadowRadius: 24, elevation: 14,
     },
     nodeWrapper: { position: 'absolute', alignItems: 'center', zIndex: 5 },
     avatar: {
@@ -401,13 +427,12 @@ const S = StyleSheet.create({
     },
     badge: {
         position: 'absolute', top: -3, right: -3,
-        backgroundColor: '#d97706', width: 20, height: 20, borderRadius: 10,
-        alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#0a0a0f',
-        zIndex: 10,
+        backgroundColor: '#d97706', width: 18, height: 18, borderRadius: 9,
+        alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#0a0a0f', zIndex: 10,
     },
-    nodeName: { color: '#fff', fontSize: 12, fontWeight: '700', textAlign: 'center', marginTop: 6, maxWidth: 80 },
-    nodeRel: { color: '#9ca3af', fontSize: 10, textAlign: 'center', maxWidth: 80 },
-    nodeLabel: { position: 'absolute', color: '#e5e7eb', fontSize: 14, fontWeight: 'bold' },
+    nodeName: { color: '#fff', fontSize: 11, fontWeight: '700', textAlign: 'center', marginTop: 5, maxWidth: 72 },
+    nodeRel: { color: '#9ca3af', fontSize: 9, textAlign: 'center', maxWidth: 72 },
+    nodeLabel: { position: 'absolute', color: '#e5e7eb', fontSize: 13, fontWeight: 'bold' },
     fab: {
         position: 'absolute', bottom: 30, right: 30,
         width: 60, height: 60, borderRadius: 30, backgroundColor: '#8b5cf6',
