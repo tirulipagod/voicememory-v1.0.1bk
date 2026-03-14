@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Connection } from '../../services/LocalStorage';
-import Svg, { Defs, RadialGradient, Stop, Circle as SvgCircle } from 'react-native-svg';
+import Svg, { Defs, RadialGradient, Stop, Circle as SvgCircle, Ellipse } from 'react-native-svg';
 
 const { width, height } = Dimensions.get('window');
 const MAP_WIDTH = width * 3;
@@ -16,7 +16,10 @@ const SUN_SIZE = 110;
 const MAX_PLANET_SIZE = Math.floor(SUN_SIZE * 0.50); // 55px hard cap
 const BASE_NODE_SIZE = 36;
 const MEMORY_SIZE_FACTOR = 3;
-const ORBIT_RADII = [140, 260, 390, 520];
+// ── Pillar 3: Organic Geometry constants ──────────────────────────────
+const MIN_ORBIT_RADIUS = 150;
+const MAX_ORBIT_RADIUS = 490;
+const MAX_MEMORIES_SCALE = 12; // memoryCount at which planet is at closest orbit
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 2.5;
 const DEFAULT_ZOOM = 0.85;
@@ -58,11 +61,7 @@ interface Props {
     onAddPress: () => void;
 }
 
-function orbitFor(date: string | null) {
-    if (!date) return 3;
-    const d = (Date.now() - new Date(date).getTime()) / 86400000;
-    return d <= 7 ? 0 : d <= 14 ? 1 : d <= 30 ? 2 : 3;
-}
+// nodeSize and glowColor remain; orbitFor is no longer needed (Pillar 3 uses polar coords)
 
 function nodeSize(n: number) {
     return Math.min(BASE_NODE_SIZE + n * MEMORY_SIZE_FACTOR, MAX_PLANET_SIZE);
@@ -173,6 +172,38 @@ const StarField = memo(() => {
     );
 });
 
+// ── Pillar 4: Glass Orb — directional 3D sphere refraction ─────────────
+// theta = planet's angle from center. Light (Sun) is at the opposite side.
+let _gobid = 0;
+const GlassOrb = memo(({ size, theta }: { size: number; theta: number }) => {
+    const id = useRef(`orb${_gobid++}`).current;
+    // Specular highlight faces the Sun: direction = theta + PI (pointing back to center)
+    const lightAngle = theta + Math.PI;
+    const cx = `${Math.round((0.5 + 0.33 * Math.cos(lightAngle)) * 100)}%`;
+    const cy = `${Math.round((0.5 + 0.33 * Math.sin(lightAngle)) * 100)}%`;
+    return (
+        <Svg
+            width={size}
+            height={size}
+            style={{ position: 'absolute', top: 0, left: 0, borderRadius: size / 2, overflow: 'hidden' }}
+            pointerEvents="none"
+        >
+            <Defs>
+                <RadialGradient id={id} cx={cx} cy={cy} r="72%">
+                    {[
+                        <Stop key="g1" offset="0%" stopColor="#ffffff" stopOpacity="0.82" />,
+                        <Stop key="g2" offset="22%" stopColor="#ffffff" stopOpacity="0.22" />,
+                        <Stop key="g3" offset="50%" stopColor="#000000" stopOpacity="0.0" />,
+                        <Stop key="g4" offset="80%" stopColor="#000000" stopOpacity="0.32" />,
+                        <Stop key="g5" offset="100%" stopColor="#000000" stopOpacity="0.70" />,
+                    ]}
+                </RadialGradient>
+            </Defs>
+            <SvgCircle cx={size / 2} cy={size / 2} r={size / 2} fill={`url(#${id})`} />
+        </Svg>
+    );
+});
+
 // ── Main Component ────────────────────────────────────────────────────
 export default function ConnectionsMap({ connections, metadata, onNodePress, onAddPress }: Props) {
     const panX = useRef(INITIAL_PAN_X);
@@ -270,28 +301,39 @@ export default function ConnectionsMap({ connections, metadata, onNodePress, onA
     };
 
     const layout = useMemo(() => {
-        const rings: Record<number, string[]> = { 0: [], 1: [], 2: [], 3: [] };
         const mmap: Record<string, ConnectionMetadata> = {};
         metadata.forEach(m => { mmap[m.connectionId] = m; });
-        connections.forEach(c => rings[orbitFor(mmap[c.id]?.lastInteractionDate ?? null)].push(c.id));
-        const pos: Record<string, { x: number; y: number; size: number; color: string }> = {};
-        for (let r = 0; r <= 3; r++) {
-            const ids = rings[r];
-            if (!ids.length) continue;
-            const radius = ORBIT_RADII[r];
-            const step = (Math.PI * 2) / ids.length;
-            const offset = r * (Math.PI / 5);
-            ids.forEach((id, i) => {
-                const meta = mmap[id];
-                const sz = nodeSize(meta?.memoryCount ?? 0);
-                pos[id] = {
-                    x: centerX + Math.cos(i * step + offset) * radius - sz / 2,
-                    y: centerY + Math.sin(i * step + offset) * radius - sz / 2,
-                    size: sz,
-                    color: glowColor(meta?.dominantEmotion ?? null),
-                };
-            });
-        }
+
+        const total = connections.length || 1;
+        const pos: Record<string, { x: number; y: number; size: number; color: string; theta: number }> = {};
+
+        connections.forEach((c, index) => {
+            const meta = mmap[c.id];
+            const memCount = meta?.memoryCount ?? 0;
+            const sz = nodeSize(memCount);
+
+            // Correction 1: Anti-Overlap — Slice-based base angle
+            // Divide 360º evenly by total connections, add small organic noise per ID
+            const baseAngle = (2 * Math.PI / total) * index;
+            const idSeed = c.id.split('').reduce((acc, ch) => (acc * 31 + ch.charCodeAt(0)) | 0, 0);
+            const rand = mulberry32(Math.abs(idSeed));
+            const noise = (rand() * 2 - 1) * 0.2; // ±0.2 rad organic deviation
+            const theta = baseAngle + noise;
+
+            // Radius inversely proportional to memory count
+            const t = Math.min(memCount / MAX_MEMORIES_SCALE, 1.0);
+            const baseRadius = MAX_ORBIT_RADIUS - t * (MAX_ORBIT_RADIUS - MIN_ORBIT_RADIUS);
+            const variance = baseRadius * 0.05;
+            const r = baseRadius + (rand() * 2 - 1) * variance;
+
+            pos[c.id] = {
+                x: centerX + Math.cos(theta) * r - sz / 2,
+                y: centerY + Math.sin(theta) * r - sz / 2,
+                size: sz,
+                color: glowColor(meta?.dominantEmotion ?? null),
+                theta, // stored for directional GlassOrb lighting
+            };
+        });
         return pos;
     }, [connections, metadata, centerX, centerY]);
 
@@ -317,15 +359,7 @@ export default function ConnectionsMap({ connections, metadata, onNodePress, onA
             >
                 <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={handleMapTap} />
 
-                {/* Orbit rings (subtle) */}
-                {ORBIT_RADII.map((r, i) => (
-                    <View key={i} pointerEvents="none" style={{
-                        position: 'absolute', left: centerX - r, top: centerY - r,
-                        width: r * 2, height: r * 2, borderRadius: r,
-                        borderWidth: StyleSheet.hairlineWidth,
-                        borderColor: `rgba(139,92,246,${0.07 + i * 0.018})`,
-                    }} />
-                ))}
+                {/* No more rigid orbit rings in Pillar 3 — organic geometry replaces them */}
 
                 {/* Connection lines */}
                 {connections.map(c => {
@@ -379,6 +413,8 @@ export default function ConnectionsMap({ connections, metadata, onNodePress, onA
                                         ? <Image source={{ uri: c.photoUri }} style={{ width: '100%', height: '100%' }} />
                                         : <Ionicons name="person" size={p.size * 0.48} color={p.color} />
                                     }
+                                    {/* Pillar 4: Directional Glass Orb — light from Sun */}
+                                    <GlassOrb size={p.size} theta={p.theta} />
                                 </View>
                                 {c.signatureMemoryId && (
                                     <View style={S.badge}>
