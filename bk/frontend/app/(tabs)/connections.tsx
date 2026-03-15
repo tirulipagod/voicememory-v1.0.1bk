@@ -349,8 +349,13 @@ export default function ConnectionsScreen() {
     return (
         <SafeAreaView style={styles.container} edges={['top']}>
             <View style={styles.header}>
-                <Text style={styles.title}>Conexões</Text>
-                <Text style={styles.subtitle}>Sua constelação de pessoas e memórias</Text>
+                <View>
+                    <Text style={styles.title}>Conexões</Text>
+                    <Text style={styles.subtitle}>Sua constelação de pessoas e memórias</Text>
+                </View>
+                <TouchableOpacity style={styles.fabHeader} onPress={handleAddPress} activeOpacity={0.7}>
+                    <Ionicons name="add" size={28} color="#fff" />
+                </TouchableOpacity>
             </View>
 
             <View style={styles.content}>
@@ -602,6 +607,22 @@ const styles = StyleSheet.create({
     modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
     modalTitle: { fontSize: 20, color: '#fff', fontWeight: 'bold' },
     modalDragIndicator: { width: 40, height: 4, backgroundColor: '#4b5563', borderRadius: 2, alignSelf: 'center', marginBottom: 20 },
+    fabHeader: {
+        position: 'absolute',
+        top: 16,
+        right: 20,
+        backgroundColor: '#8b5cf6',
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        alignItems: 'center',
+        justifyContent: 'center',
+        shadowColor: '#8b5cf6',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.4,
+        shadowRadius: 8,
+        elevation: 6,
+    },
 
     // Add Modal - Avatar
     avatarPickerContainer: {

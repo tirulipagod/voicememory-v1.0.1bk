@@ -26,6 +26,19 @@ const DEFAULT_ZOOM = 0.85;
 const INITIAL_PAN_X = -(MAP_WIDTH - width) / 2;
 const INITIAL_PAN_Y = -(MAP_HEIGHT - height) / 2;
 
+const PLANET_IMAGES = [
+    require('../../../assets/images/planets/planet_1.png'),
+    require('../../../assets/images/planets/planet_2.png'),
+    require('../../../assets/images/planets/planet_3.png'),
+    require('../../../assets/images/planets/planet_4.png'),
+    require('../../../assets/images/planets/planet_5.png'),
+    require('../../../assets/images/planets/planet_6.png'),
+    require('../../../assets/images/planets/planet_7.png'),
+    require('../../../assets/images/planets/planet_8.png'),
+];
+
+const SUN_IMAGE = require('../../../assets/images/sun/sun.png');
+
 // ── Pillar 1: Deterministic PRNG for star positions ──────────────────
 function mulberry32(seed: number) {
     return function () {
@@ -90,7 +103,7 @@ const PlanetGlow = memo(({ color, size, isSun }: { color: string; size: number; 
         a.start();
         return () => a.stop();
     }, []);
-    const cs = size * (isSun ? 5 : 4);
+    const cs = size * (isSun ? 2.2 : 2.0);
     const half = cs / 2;
     const opacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [isSun ? 0.6 : 0.5, 1.0] });
     return (
@@ -176,15 +189,16 @@ const StarField = memo(() => {
 // theta = planet's angle from center. Light (Sun) is at the opposite side.
 let _gobid = 0;
 const GlassOrb = memo(({ size, theta }: { size: number; theta: number }) => {
-    const id = useRef(`orb${_gobid++}`).current;
+    const orbId = useRef(`orb${_gobid++}`).current;
+
     // Specular highlight faces the Sun: direction = theta + PI (pointing back to center)
     const lightAngle = theta + Math.PI;
 
-    // Linear gradient coordinates based on light angle
-    const x1 = `${50 + 50 * Math.cos(lightAngle)}%`;
-    const y1 = `${50 + 50 * Math.sin(lightAngle)}%`;
-    const x2 = `${50 - 50 * Math.cos(lightAngle)}%`;
-    const y2 = `${50 - 50 * Math.sin(lightAngle)}%`;
+    // Linear diffuse gradient coordinates
+    const sx1 = `${50 + 50 * Math.cos(lightAngle)}%`;
+    const sy1 = `${50 + 50 * Math.sin(lightAngle)}%`;
+    const sx2 = `${50 - 50 * Math.cos(lightAngle)}%`;
+    const sy2 = `${50 - 50 * Math.sin(lightAngle)}%`;
 
     return (
         <Svg
@@ -196,21 +210,23 @@ const GlassOrb = memo(({ size, theta }: { size: number; theta: number }) => {
                 left: 0,
                 borderRadius: size / 2,
                 overflow: 'hidden',
-                // Thin inner border for "glass cut" effect
                 borderWidth: 1,
                 borderColor: 'rgba(255,255,255,0.1)'
             }}
             pointerEvents="none"
         >
             <Defs>
-                <LinearGradient id={id} x1={x1} y1={y1} x2={x2} y2={y2}>
-                    <Stop offset="0%" stopColor="#ffffff" stopOpacity="0.35" />
-                    <Stop offset="30%" stopColor="#ffffff" stopOpacity="0" />
-                    <Stop offset="60%" stopColor="#000000" stopOpacity="0" />
-                    <Stop offset="100%" stopColor="#000000" stopOpacity="0.8" />
+                {/* High Contrast Diffuse Lighting */}
+                <LinearGradient id={orbId} x1={sx1} y1={sy1} x2={sx2} y2={sy2}>
+                    <Stop offset="0%" stopColor="#ffffff" stopOpacity="0.7" />
+                    <Stop offset="18%" stopColor="#ffffff" stopOpacity="0" />
+                    <Stop offset="68%" stopColor="#000000" stopOpacity="0" />
+                    <Stop offset="85%" stopColor="#000000" stopOpacity="0.9" />
+                    <Stop offset="100%" stopColor="#000000" stopOpacity="1.0" />
                 </LinearGradient>
             </Defs>
-            <SvgCircle cx={size / 2} cy={size / 2} r={size / 2} fill={`url(#${id})`} />
+
+            <SvgCircle cx={size / 2} cy={size / 2} r={size / 2} fill={`url(#${orbId})`} />
         </Svg>
     );
 });
@@ -393,9 +409,9 @@ export default function ConnectionsMap({ connections, metadata, onNodePress, onA
                     style={{ position: 'absolute', left: centerX - sunHalf, top: centerY - sunHalf, width: SUN_SIZE, height: SUN_SIZE, alignItems: 'center', justifyContent: 'center', zIndex: 10 }}
                     pointerEvents="none"
                 >
-                    <PlanetGlow color="#a78bfa" size={SUN_SIZE} isSun={true} />
+                    <PlanetGlow color="#fbbf24" size={SUN_SIZE} isSun={true} />
                     <View style={S.sunCore}>
-                        <Ionicons name="person" size={46} color="#fff" />
+                        <Image source={SUN_IMAGE} style={{ width: SUN_SIZE, height: SUN_SIZE }} resizeMode="contain" />
                     </View>
                 </View>
                 <Text
@@ -418,12 +434,16 @@ export default function ConnectionsMap({ connections, metadata, onNodePress, onA
                             hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
                         >
                             <View style={{ width: p.size, height: p.size, alignItems: 'center', justifyContent: 'center' }}>
-                                <PlanetGlow color={p.color} size={p.size} />
-                                <View style={[S.avatar, { width: p.size, height: p.size, borderRadius: p.size / 2, borderColor: p.color }]}>
-                                    {c.photoUri
-                                        ? <Image source={{ uri: c.photoUri }} style={{ width: '100%', height: '100%' }} />
-                                        : <Ionicons name="person" size={p.size * 0.48} color={p.color} />
-                                    }
+                                {/* <PlanetGlow color={p.color} size={p.size} /> */}
+                                <View style={[S.avatar, { width: p.size, height: p.size, borderRadius: p.size / 2 }]}>
+                                    {c.photoUri ? (
+                                        <Image source={{ uri: c.photoUri }} style={{ width: '100%', height: '100%' }} />
+                                    ) : (
+                                        <Image
+                                            source={PLANET_IMAGES[Math.abs(c.id.split('').reduce((acc, ch) => (acc * 31 + ch.charCodeAt(0)) | 0, 0)) % PLANET_IMAGES.length]}
+                                            style={{ width: '100%', height: '100%', borderRadius: p.size / 2 }}
+                                        />
+                                    )}
                                     {/* Pillar 4: Directional Glass Orb — light from Sun */}
                                     <GlassOrb size={p.size} theta={p.theta} />
                                 </View>
@@ -445,13 +465,6 @@ export default function ConnectionsMap({ connections, metadata, onNodePress, onA
             <TouchableOpacity style={S.centerBtn} onPress={centerMap} activeOpacity={0.8}>
                 <Ionicons name="locate-outline" size={22} color="#a78bfa" />
             </TouchableOpacity>
-            <TouchableOpacity style={S.fab} onPress={onAddPress} activeOpacity={0.85}>
-                <Ionicons name="add" size={32} color="#fff" />
-            </TouchableOpacity>
-            <View style={S.tooltip} pointerEvents="none">
-                <Ionicons name="hand-left-outline" size={14} color="#d1d5db" />
-                <Text style={S.tooltipText}>Arraste  ·  Pinça para zoom  ·  2× para centrar</Text>
-            </View>
         </View>
     );
 }
@@ -461,15 +474,12 @@ const S = StyleSheet.create({
     map: { width: MAP_WIDTH, height: MAP_HEIGHT },
     sunCore: {
         width: SUN_SIZE, height: SUN_SIZE, borderRadius: SUN_SIZE / 2,
-        backgroundColor: '#7c3aed',
         alignItems: 'center', justifyContent: 'center',
-        borderWidth: 3, borderColor: '#c4b5fd',
-        shadowColor: '#a78bfa', shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.9, shadowRadius: 24, elevation: 14,
+        overflow: 'hidden',
     },
     nodeWrapper: { position: 'absolute', alignItems: 'center', zIndex: 5 },
     avatar: {
-        backgroundColor: '#12121a', borderWidth: 2,
+        backgroundColor: '#12121a',
         alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
     },
     badge: {
@@ -480,14 +490,8 @@ const S = StyleSheet.create({
     nodeName: { color: '#fff', fontSize: 11, fontWeight: '700', textAlign: 'center', marginTop: 5, maxWidth: 72 },
     nodeRel: { color: '#9ca3af', fontSize: 9, textAlign: 'center', maxWidth: 72 },
     nodeLabel: { position: 'absolute', color: '#e5e7eb', fontSize: 13, fontWeight: 'bold' },
-    fab: {
-        position: 'absolute', bottom: 30, right: 30,
-        width: 60, height: 60, borderRadius: 30, backgroundColor: '#8b5cf6',
-        alignItems: 'center', justifyContent: 'center',
-        shadowColor: '#8b5cf6', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.55, shadowRadius: 10, elevation: 8,
-    },
     centerBtn: {
-        position: 'absolute', bottom: 104, right: 36,
+        position: 'absolute', bottom: 25, right: 16,
         width: 44, height: 44, borderRadius: 22,
         backgroundColor: 'rgba(26,26,36,0.92)',
         borderWidth: 1, borderColor: 'rgba(139,92,246,0.4)',
@@ -502,7 +506,7 @@ const S = StyleSheet.create({
     },
     tooltipText: { color: '#d1d5db', fontSize: 11 },
     zoomBadge: {
-        position: 'absolute', bottom: 156, right: 38,
+        position: 'absolute', bottom: 32, right: 68,
         flexDirection: 'row', alignItems: 'center', gap: 4,
         backgroundColor: 'rgba(26,26,36,0.85)',
         paddingHorizontal: 9, paddingVertical: 4, borderRadius: 12,
