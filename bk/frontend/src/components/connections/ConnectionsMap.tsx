@@ -1,11 +1,14 @@
-import React, { useRef, useEffect, useMemo, useState, memo, useCallback } from 'react';
-import {
-    View, Text, StyleSheet, Dimensions, Animated,
-    PanResponder, TouchableOpacity, Image, Easing,
-} from 'react-native';
+import React, { useRef, useEffect, useMemo, useState, memo } from 'react';
+import { View, Text, StyleSheet, Dimensions, TouchableOpacity, Image, Easing, Animated as RNAnimated } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Connection } from '../../services/LocalStorage';
-import Svg, { Defs, RadialGradient, LinearGradient, Stop, Circle as SvgCircle, Ellipse } from 'react-native-svg';
+import Svg, { Defs, LinearGradient, RadialGradient, Stop, Circle as SvgCircle, Ellipse } from 'react-native-svg';
+import Animated, {
+    useSharedValue, useAnimatedStyle, withSpring, withTiming,
+    interpolate, Easing as ReAnimatedEasing, useDerivedValue,
+    cancelAnimation
+} from 'react-native-reanimated';
+import { GestureDetector, Gesture, GestureHandlerRootView } from 'react-native-gesture-handler';
 
 const { width, height } = Dimensions.get('window');
 const MAP_WIDTH = width * 3;
@@ -38,6 +41,7 @@ const PLANET_IMAGES = [
 ];
 
 const SUN_IMAGE = require('../../../assets/images/sun/sun.png');
+const MOON_IMAGE = require('../../../assets/images/Moon/moon.png');
 
 // ── Pillar 1: Deterministic PRNG for star positions ──────────────────
 function mulberry32(seed: number) {
@@ -94,11 +98,11 @@ function pinchDist(t0: any, t1: any) {
 let _gid = 0;
 const PlanetGlow = memo(({ color, size, isSun }: { color: string; size: number; isSun?: boolean }) => {
     const id = useRef(`g${_gid++}`).current;
-    const pulse = useRef(new Animated.Value(0)).current;
+    const pulse = useRef(new RNAnimated.Value(0)).current;
     useEffect(() => {
-        const a = Animated.loop(Animated.sequence([
-            Animated.timing(pulse, { toValue: 1, duration: isSun ? 1800 : 2400, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-            Animated.timing(pulse, { toValue: 0, duration: isSun ? 1800 : 2400, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        const a = RNAnimated.loop(RNAnimated.sequence([
+            RNAnimated.timing(pulse, { toValue: 1, duration: isSun ? 1800 : 2400, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+            RNAnimated.timing(pulse, { toValue: 0, duration: isSun ? 1800 : 2400, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
         ]));
         a.start();
         return () => a.stop();
@@ -107,7 +111,7 @@ const PlanetGlow = memo(({ color, size, isSun }: { color: string; size: number; 
     const half = cs / 2;
     const opacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [isSun ? 0.6 : 0.5, 1.0] });
     return (
-        <Animated.View pointerEvents="none" style={{ position: 'absolute', width: cs, height: cs, opacity }}>
+        <RNAnimated.View pointerEvents="none" style={{ position: 'absolute', width: cs, height: cs, opacity }}>
             <Svg width={cs} height={cs}>
                 <Defs>
                     <RadialGradient id={id} cx="50%" cy="50%" r="50%">
@@ -132,56 +136,52 @@ const PlanetGlow = memo(({ color, size, isSun }: { color: string; size: number; 
                 </Defs>
                 <SvgCircle cx={half} cy={half} r={half} fill={`url(#${id})`} />
             </Svg>
-        </Animated.View>
+        </RNAnimated.View>
     );
 });
 
-// ── Zoom Badge ────────────────────────────────────────────────────────
-const ZoomBadge = memo(({ anim }: { anim: Animated.Value }) => {
-    const [label, setLabel] = useState(`${Math.round(DEFAULT_ZOOM * 100)}%`);
-    useEffect(() => {
-        const id = anim.addListener(({ value }) => setLabel(`${Math.round(value * 100)}%`));
-        return () => anim.removeListener(id);
-    }, []);
-    return (
-        <View style={S.zoomBadge}>
-            <Ionicons name="search-outline" size={12} color="#9ca3af" />
-            <Text style={S.zoomBadgeText}>{label}</Text>
-        </View>
-    );
-});
-
-// ── Pillar 1: Star Field (rendered inside parallax layer) ─────────────
+// ── StarField ─────────────────────────────────────────────────────────
 const StarField = memo(() => {
     const stars = useMemo(() => {
-        const rand = mulberry32(7919); // prime seed for stable layout
-        return Array.from({ length: 140 }, (_, i) => ({
-            key: i,
+        const rand = mulberry32(42);
+        return Array.from({ length: 140 }, () => ({
             x: rand() * MAP_WIDTH,
             y: rand() * MAP_HEIGHT,
-            size: 0.8 + rand() * 2.2,
-            opacity: 0.12 + rand() * 0.68,
+            size: rand() * 2 + 0.5,
+            opacity: rand() * 0.7 + 0.2,
+            duration: rand() * 3000 + 2000,
         }));
     }, []);
+
     return (
         <View style={StyleSheet.absoluteFill}>
-            {stars.map(s => (
-                <View
-                    key={s.key}
-                    pointerEvents="none"
-                    style={{
-                        position: 'absolute',
-                        left: s.x,
-                        top: s.y,
-                        width: s.size,
-                        height: s.size,
-                        borderRadius: s.size / 2,
-                        backgroundColor: '#ffffff',
-                        opacity: s.opacity,
-                    }}
-                />
-            ))}
+            {stars.map((s, i) => <Star key={i} {...s} />)}
         </View>
+    );
+});
+
+const Star = memo(({ x, y, size, opacity, duration }: { x: number, y: number, size: number, opacity: number, duration: number }) => {
+    const anim = useRef(new RNAnimated.Value(0)).current;
+    useEffect(() => {
+        RNAnimated.loop(RNAnimated.sequence([
+            RNAnimated.timing(anim, { toValue: 1, duration, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+            RNAnimated.timing(anim, { toValue: 0, duration, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        ])).start();
+    }, []);
+
+    const op = anim.interpolate({ inputRange: [0, 1], outputRange: [opacity * 0.3, opacity] });
+
+    return (
+        <RNAnimated.View
+            style={{
+                position: 'absolute',
+                left: x, top: y,
+                width: size, height: size,
+                borderRadius: size / 2,
+                backgroundColor: '#fff',
+                opacity: op,
+            }}
+        />
     );
 });
 
@@ -230,96 +230,207 @@ const GlassOrb = memo(({ size, theta }: { size: number; theta: number }) => {
         </Svg>
     );
 });
+// ── Pillar 5: Dynamic Atmosphere ─────────────────────────────────────
+
+// ── Pillar 5: Dynamic Atmosphere Node Wrapper ──────────────────────────
+// This component ensures both Moon layers share the same animation clock
+const PlanetNode = ({
+    connection,
+    layout,
+    onPress,
+    onMoonFront,
+    onMoonBack
+}: {
+    connection: Connection,
+    layout: any,
+    onPress: (c: Connection) => void,
+    onMoonFront: (size: number, id: string, angle: any) => React.ReactNode,
+    onMoonBack: (size: number, id: string, angle: any) => React.ReactNode
+}) => {
+    const angle = useSharedValue(0);
+    const p = layout;
+
+    const phaseOffset = useMemo(() => {
+        const hash = connection.id.split('').reduce((acc, ch) => (acc * 31 + ch.charCodeAt(0)) | 0, 0);
+        return Math.abs(hash % 1000) / 1000;
+    }, [connection.id]);
+
+    useEffect(() => {
+        angle.value = phaseOffset;
+        angle.value = withTiming(phaseOffset + 1, {
+            duration: 7000 + p.size * 45,
+            easing: ReAnimatedEasing.linear,
+        }, (finished) => {
+            if (finished) {
+                angle.value = phaseOffset;
+                const runLoop = () => {
+                    angle.value = withTiming(angle.value + 1, {
+                        duration: 7000 + p.size * 45,
+                        easing: ReAnimatedEasing.linear,
+                    }, (f) => { if (f) runLoop(); });
+                };
+                runLoop();
+            }
+        });
+        return () => cancelAnimation(angle);
+    }, [p.size, phaseOffset, angle]);
+
+    return (
+        <TouchableOpacity
+            key={connection.id}
+            style={[S.nodeWrapper, { left: p.x, top: p.y }]}
+            onPress={() => onPress(connection)}
+            activeOpacity={0.85}
+            hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+        >
+            <View style={{ width: p.size, height: p.size, alignItems: 'center', justifyContent: 'center' }}>
+                {onMoonBack(p.size, connection.id, angle)}
+
+                <View style={[S.avatar, { width: p.size, height: p.size, borderRadius: p.size / 2, zIndex: 10 }]}>
+                    {connection.photoUri ? (
+                        <Image source={{ uri: connection.photoUri }} style={{ width: '100%', height: '100%' }} />
+                    ) : (
+                        <Image
+                            source={PLANET_IMAGES[Math.abs(connection.id.split('').reduce((acc, ch) => (acc * 31 + ch.charCodeAt(0)) | 0, 0)) % PLANET_IMAGES.length]}
+                            style={{ width: '100%', height: '100%', borderRadius: p.size / 2 }}
+                        />
+                    )}
+                    <GlassOrb size={p.size} theta={p.theta} />
+                </View>
+
+                {onMoonFront(p.size, connection.id, angle)}
+            </View>
+            <Text style={S.nodeName} numberOfLines={1}>{connection.name}</Text>
+            <Text style={S.nodeRel} numberOfLines={1}>{connection.relationship}</Text>
+        </TouchableOpacity>
+    );
+};
+
+// Style A: Orbiting Moon Layer (Simplified to rely on parent angle)
+const OrbitingMoonLayer = memo(({ size, isFront, angle }: { size: number; isFront: boolean; angle: any }) => {
+    const orbitRadius = size * 0.85;
+    const moonSize = Math.max(8, size * 0.22);
+    const yPersp = 0.35;
+
+    const animatedStyle = useAnimatedStyle(() => {
+        const rad = angle.value * Math.PI * 2;
+        const tx = Math.cos(rad) * orbitRadius;
+        const ty = Math.sin(rad) * orbitRadius * yPersp;
+
+        const sinVal = Math.sin(rad);
+        let opacity = 0;
+        // Strict depth logic: Y > 0 is front, Y < 0 is back
+        if (isFront) {
+            opacity = interpolate(sinVal, [-0.05, 0.05], [0, 1], 'clamp');
+        } else {
+            opacity = interpolate(sinVal, [-0.05, 0.05], [1, 0], 'clamp');
+        }
+
+        return {
+            transform: [{ translateX: tx }, { translateY: ty }],
+            opacity,
+            zIndex: isFront ? 20 : -1,
+        };
+    });
+
+    return (
+        <Animated.View
+            pointerEvents="none"
+            style={[
+                { position: 'absolute', width: moonSize, height: moonSize },
+                animatedStyle
+            ]}
+        >
+            <Image
+                source={MOON_IMAGE}
+                style={{ width: '100%', height: '100%', tintColor: isFront ? undefined : 'rgba(0,0,0,0.6)' }}
+                resizeMode="contain"
+            />
+        </Animated.View>
+    );
+});
+
 
 // ── Main Component ────────────────────────────────────────────────────
 export default function ConnectionsMap({ connections, metadata, onNodePress, onAddPress }: Props) {
-    const panX = useRef(INITIAL_PAN_X);
-    const panY = useRef(INITIAL_PAN_Y);
-    const zoom = useRef(DEFAULT_ZOOM);
-    const panAnim = useRef(new Animated.ValueXY({ x: INITIAL_PAN_X, y: INITIAL_PAN_Y })).current;
-    const zoomAnim = useRef(new Animated.Value(DEFAULT_ZOOM)).current;
+    const translateX = useSharedValue(INITIAL_PAN_X);
+    const translateY = useSharedValue(INITIAL_PAN_Y);
+    const scale = useSharedValue(DEFAULT_ZOOM);
 
-    // Pillar 1: Parallax = 25% of main pan speed
-    const parallaxX = useRef(Animated.multiply(panAnim.x, 0.25)).current;
-    const parallaxY = useRef(Animated.multiply(panAnim.y, 0.25)).current;
+    // Separate contexts for each gesture to prevent collision
+    const panStart = useSharedValue({ x: 0, y: 0 });
+    const pinchStart = useSharedValue({ x: 0, y: 0, scale: 1, focalX: 0, focalY: 0 });
+    const isPinching = useSharedValue(false);
+
+    const panGesture = Gesture.Pan()
+        .minDistance(4)
+        .onStart(() => {
+            // Block pan if pinch is already active
+            if (isPinching.value) return;
+            panStart.value = { x: translateX.value, y: translateY.value };
+        })
+        .onUpdate((event) => {
+            if (isPinching.value) return;
+            translateX.value = panStart.value.x + event.translationX;
+            translateY.value = panStart.value.y + event.translationY;
+        });
+
+    const pinchGesture = Gesture.Pinch()
+        .onStart((event) => {
+            isPinching.value = true;
+            // Snapshot current state once — never updated during the gesture
+            pinchStart.value = {
+                x: translateX.value,
+                y: translateY.value,
+                scale: scale.value,
+                focalX: event.focalX,
+                focalY: event.focalY,
+            };
+        })
+        .onUpdate((event) => {
+            const newScale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, pinchStart.value.scale * event.scale));
+            const ratio = newScale / pinchStart.value.scale;
+
+            // Mathematically correct formula for React Native center-origin scale:
+            // transform: [translateX, translateY, scale] scales around element center (MAP_WIDTH/2, MAP_HEIGHT/2).
+            // newTx = oldTx × ratio + (focalX − MAP_CENTER_X) × (1 − ratio)
+            // This ensures the focal point stays fixed in screen space.
+            translateX.value = pinchStart.value.x * ratio + (pinchStart.value.focalX - MAP_WIDTH / 2) * (1 - ratio);
+            translateY.value = pinchStart.value.y * ratio + (pinchStart.value.focalY - MAP_HEIGHT / 2) * (1 - ratio);
+            scale.value = newScale;
+        })
+        .onEnd(() => { isPinching.value = false; })
+        .onFinalize(() => { isPinching.value = false; });
+
+    const combinedGesture = Gesture.Simultaneous(pinchGesture, panGesture);
 
     const centerX = MAP_WIDTH / 2;
     const centerY = MAP_HEIGHT / 2;
     const sunHalf = SUN_SIZE / 2;
 
-    const isPinching = useRef(false);
-    const pinchDist0 = useRef<number | null>(null);
-    const pinchCenter = useRef({ x: 0, y: 0 });
-    const lastTouch = useRef({ x: 0, y: 0 });
+    const animatedMapStyle = useAnimatedStyle(() => ({
+        transform: [
+            { translateX: translateX.value },
+            { translateY: translateY.value },
+            { scale: scale.value }
+        ]
+    }));
+
+    // Parallax: stars move at 30% of the main pan speed, creating depth
+    const parallaxStyle = useAnimatedStyle(() => ({
+        transform: [
+            { translateX: translateX.value * 0.3 },
+            { translateY: translateY.value * 0.3 },
+            { scale: 0.7 + scale.value * 0.3 },
+        ]
+    }));
+
     const lastTap = useRef(0);
-
-    function clamp(x: number, y: number, z: number) {
-        const halfW = MAP_WIDTH / 2, halfH = MAP_HEIGHT / 2;
-        const minX = width - halfW * (1 + z), maxX = halfW * (z - 1);
-        const minY = height - halfH * (1 + z), maxY = halfH * (z - 1);
-        return {
-            x: minX > maxX ? INITIAL_PAN_X : Math.min(maxX, Math.max(minX, x)),
-            y: minY > maxY ? INITIAL_PAN_Y : Math.min(maxY, Math.max(minY, y)),
-        };
-    }
-
-    const centerMap = useCallback(() => {
-        panX.current = INITIAL_PAN_X; panY.current = INITIAL_PAN_Y; zoom.current = DEFAULT_ZOOM;
-        Animated.parallel([
-            Animated.spring(panAnim, { toValue: { x: INITIAL_PAN_X, y: INITIAL_PAN_Y }, useNativeDriver: false, friction: 7 }),
-            Animated.spring(zoomAnim, { toValue: DEFAULT_ZOOM, useNativeDriver: false, friction: 7 }),
-        ]).start();
-    }, []);
-
-    const responder = useRef(PanResponder.create({
-        onStartShouldSetPanResponder: () => false,
-        onStartShouldSetPanResponderCapture: () => false,
-        onMoveShouldSetPanResponder: (e, g) =>
-            (e.nativeEvent.touches as any[]).length >= 2 || Math.abs(g.dx) > 4 || Math.abs(g.dy) > 4,
-        onMoveShouldSetPanResponderCapture: (e, g) =>
-            (e.nativeEvent.touches as any[]).length >= 2 || Math.abs(g.dx) > 4 || Math.abs(g.dy) > 4,
-        onPanResponderGrant: (e) => {
-            isPinching.current = false; pinchDist0.current = null;
-            const t = (e.nativeEvent.touches as any[])[0];
-            lastTouch.current = { x: t?.pageX ?? 0, y: t?.pageY ?? 0 };
-        },
-        onPanResponderMove: (e) => {
-            const touches = e.nativeEvent.touches as any[];
-            if (touches.length >= 2) {
-                const dist = pinchDist(touches[0], touches[1]);
-                if (!isPinching.current) {
-                    isPinching.current = true;
-                    pinchCenter.current = { x: (touches[0].pageX + touches[1].pageX) / 2, y: (touches[0].pageY + touches[1].pageY) / 2 };
-                    pinchDist0.current = dist; return;
-                }
-                if (pinchDist0.current && pinchDist0.current > 0) {
-                    const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom.current * (dist / pinchDist0.current)));
-                    const halfW = MAP_WIDTH / 2, halfH = MAP_HEIGHT / 2;
-                    const ratio = newZoom / zoom.current;
-                    const { x, y } = clamp(
-                        (pinchCenter.current.x - halfW) * (1 - ratio) + panX.current * ratio,
-                        (pinchCenter.current.y - halfH) * (1 - ratio) + panY.current * ratio,
-                        newZoom
-                    );
-                    zoom.current = newZoom; panX.current = x; panY.current = y;
-                    pinchDist0.current = dist;
-                    panAnim.setValue({ x, y }); zoomAnim.setValue(newZoom);
-                }
-            } else {
-                if (isPinching.current) {
-                    isPinching.current = false; pinchDist0.current = null;
-                    lastTouch.current = { x: touches[0]?.pageX ?? 0, y: touches[0]?.pageY ?? 0 }; return;
-                }
-                const tx = touches[0]?.pageX ?? 0, ty = touches[0]?.pageY ?? 0;
-                const dx = tx - lastTouch.current.x, dy = ty - lastTouch.current.y;
-                lastTouch.current = { x: tx, y: ty };
-                const { x, y } = clamp(panX.current + dx, panY.current + dy, zoom.current);
-                panX.current = x; panY.current = y;
-                panAnim.setValue({ x, y });
-            }
-        },
-        onPanResponderRelease: () => { isPinching.current = false; pinchDist0.current = null; },
-    })).current;
+    const centerMap = () => {
+        translateX.value = withSpring(INITIAL_PAN_X);
+        translateY.value = withSpring(INITIAL_PAN_Y);
+        scale.value = withSpring(DEFAULT_ZOOM);
+    };
 
     const handleMapTap = () => {
         const now = Date.now();
@@ -365,109 +476,116 @@ export default function ConnectionsMap({ connections, metadata, onNodePress, onA
     }, [connections, metadata, centerX, centerY]);
 
     return (
-        <View style={S.container}>
-            {/* ── Pillar 1: Deep Space Parallax Star Layer ─────────── */}
-            <Animated.View
-                pointerEvents="none"
-                style={{
-                    position: 'absolute',
-                    width: MAP_WIDTH,
-                    height: MAP_HEIGHT,
-                    transform: [{ translateX: parallaxX }, { translateY: parallaxY }],
-                }}
-            >
-                <StarField />
-            </Animated.View>
+        <GestureHandlerRootView style={S.container}>
+            <GestureDetector gesture={combinedGesture}>
+                <View style={S.container}>
+                    {/* Parallax Stars - moves at 30% of map, creating depth */}
+                    <Animated.View
+                        pointerEvents="none"
+                        style={[{ position: 'absolute', width: MAP_WIDTH, height: MAP_HEIGHT }, parallaxStyle]}
+                    >
+                        <StarField />
+                    </Animated.View>
 
-            {/* ── Main Constellation Map ────────────────────────────── */}
-            <Animated.View
-                style={[S.map, { transform: [{ translateX: panAnim.x }, { translateY: panAnim.y }, { scale: zoomAnim }] }]}
-                {...responder.panHandlers}
-            >
-                <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={handleMapTap} />
+                    {/* ── Main Constellation Map ────────────────────────────── */}
+                    <Animated.View style={[S.map, animatedMapStyle]}>
+                        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={handleMapTap} />
 
-                {/* No more rigid orbit rings in Pillar 3 — organic geometry replaces them */}
+                        {/* No more rigid orbit rings in Pillar 3 — organic geometry replaces them */}
 
-                {/* Connection lines */}
-                {connections.map(c => {
-                    const p = layout[c.id];
-                    if (!p) return null;
-                    const nx = p.x + p.size / 2, ny = p.y + p.size / 2;
-                    const len = Math.hypot(nx - centerX, ny - centerY);
-                    const angle = Math.atan2(ny - centerY, nx - centerX) * 180 / Math.PI;
-                    return (
-                        <View key={`l-${c.id}`} pointerEvents="none" style={{
-                            position: 'absolute', left: centerX, top: centerY - 0.5,
-                            width: len, height: 1, backgroundColor: p.color, opacity: 0.10,
-                            transformOrigin: '0% 50%', transform: [{ rotate: `${angle}deg` }],
-                        }} />
-                    );
-                })}
+                        {/* Connection lines */}
+                        {connections.map(c => {
+                            const p = layout[c.id];
+                            if (!p) return null;
+                            const nx = p.x + p.size / 2, ny = p.y + p.size / 2;
+                            const len = Math.hypot(nx - centerX, ny - centerY);
+                            const angle = Math.atan2(ny - centerY, nx - centerX) * 180 / Math.PI;
+                            return (
+                                <View key={`l-${c.id}`} pointerEvents="none" style={{
+                                    position: 'absolute', left: centerX, top: centerY - 0.5,
+                                    width: len, height: 1, backgroundColor: p.color, opacity: 0.10,
+                                    transformOrigin: '0% 50%', transform: [{ rotate: `${angle}deg` }],
+                                }} />
+                            );
+                        })}
 
-                {/* ── Pillar 2: Sun — You ───────────────────────────── */}
-                <View
-                    style={{ position: 'absolute', left: centerX - sunHalf, top: centerY - sunHalf, width: SUN_SIZE, height: SUN_SIZE, alignItems: 'center', justifyContent: 'center', zIndex: 10 }}
-                    pointerEvents="none"
-                >
-                    <PlanetGlow color="#fbbf24" size={SUN_SIZE} isSun={true} />
-                    <View style={S.sunCore}>
-                        <Image source={SUN_IMAGE} style={{ width: SUN_SIZE, height: SUN_SIZE }} resizeMode="contain" />
-                    </View>
-                </View>
-                <Text
-                    style={[S.nodeLabel, { left: centerX - 50, top: centerY + sunHalf + 10, textAlign: 'center', width: 100 }]}
-                    pointerEvents="none"
-                >
-                    Você
-                </Text>
-
-                {/* Planets */}
-                {connections.map(c => {
-                    const p = layout[c.id];
-                    if (!p) return null;
-                    return (
-                        <TouchableOpacity
-                            key={c.id}
-                            style={[S.nodeWrapper, { left: p.x, top: p.y }]}
-                            onPress={() => onNodePress(c)}
-                            activeOpacity={0.85}
-                            hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+                        {/* ── Pillar 2: Sun — You ───────────────────────────── */}
+                        <View
+                            style={{ position: 'absolute', left: centerX - sunHalf, top: centerY - sunHalf, width: SUN_SIZE, height: SUN_SIZE, alignItems: 'center', justifyContent: 'center', zIndex: 10 }}
+                            pointerEvents="none"
                         >
-                            <View style={{ width: p.size, height: p.size, alignItems: 'center', justifyContent: 'center' }}>
-                                {/* <PlanetGlow color={p.color} size={p.size} /> */}
-                                <View style={[S.avatar, { width: p.size, height: p.size, borderRadius: p.size / 2 }]}>
-                                    {c.photoUri ? (
-                                        <Image source={{ uri: c.photoUri }} style={{ width: '100%', height: '100%' }} />
-                                    ) : (
-                                        <Image
-                                            source={PLANET_IMAGES[Math.abs(c.id.split('').reduce((acc, ch) => (acc * 31 + ch.charCodeAt(0)) | 0, 0)) % PLANET_IMAGES.length]}
-                                            style={{ width: '100%', height: '100%', borderRadius: p.size / 2 }}
-                                        />
-                                    )}
-                                    {/* Pillar 4: Directional Glass Orb — light from Sun */}
-                                    <GlassOrb size={p.size} theta={p.theta} />
-                                </View>
-                                {c.signatureMemoryId && (
-                                    <View style={S.badge}>
-                                        <Ionicons name="leaf" size={9} color="#fff" />
-                                    </View>
-                                )}
+                            <PlanetGlow color="#fbbf24" size={SUN_SIZE} isSun={true} />
+                            <View style={S.sunCore}>
+                                <Image source={SUN_IMAGE} style={{ width: SUN_SIZE, height: SUN_SIZE }} resizeMode="contain" />
                             </View>
-                            <Text style={S.nodeName} numberOfLines={1}>{c.name}</Text>
-                            <Text style={S.nodeRel} numberOfLines={1}>{c.relationship}</Text>
-                        </TouchableOpacity>
-                    );
-                })}
-            </Animated.View>
+                        </View>
+                        <Text
+                            style={[S.nodeLabel, { left: centerX - 50, top: centerY + sunHalf + 10, textAlign: 'center', width: 100 }]}
+                            pointerEvents="none"
+                        >
+                            Você
+                        </Text>
 
-            {/* HUD */}
-            <ZoomBadge anim={zoomAnim} />
-            <TouchableOpacity style={S.centerBtn} onPress={centerMap} activeOpacity={0.8}>
-                <Ionicons name="locate-outline" size={22} color="#a78bfa" />
-            </TouchableOpacity>
-        </View>
+                        {/* Planets */}
+                        {connections.map(c => {
+                            const p = layout[c.id];
+                            if (!p) return null;
+                            return (
+                                <PlanetNode
+                                    key={c.id}
+                                    connection={c}
+                                    layout={p}
+                                    onPress={onNodePress}
+                                    onMoonBack={(size, id, angle) => (
+                                        <OrbitingMoonLayer size={size} isFront={false} angle={angle} />
+                                    )}
+                                    onMoonFront={(size, id, angle) => (
+                                        <OrbitingMoonLayer size={size} isFront={true} angle={angle} />
+                                    )}
+                                />
+                            );
+                        })}
+                    </Animated.View>
+
+                    {/* HUD */}
+                    {/* Note: In Reanimated, ZoomBadge needs a SharedValue. I'll pass a 0-1 derived value */}
+                    <ZoomBadgeShared scale={scale} />
+                    <TouchableOpacity style={S.centerBtn} onPress={centerMap} activeOpacity={0.8}>
+                        <Ionicons name="locate-outline" size={22} color="#a78bfa" />
+                    </TouchableOpacity>
+                </View>
+            </GestureDetector>
+        </GestureHandlerRootView>
     );
 }
+
+// Optimized ZoomBadge for Reanimated SharedValues
+const ZoomBadgeShared = ({ scale }: { scale: any }) => {
+    const animatedStyle = useAnimatedStyle(() => ({
+        opacity: interpolate(scale.value, [0.5, 1], [0.5, 1], 'clamp')
+    }));
+    const zoomPercent = useDerivedValue(() => {
+        return Math.round(scale.value * 100);
+    });
+
+    // Using a simple state for the display since Reanimated SharedValues are for styling
+    // But for a badge, this is fine
+    const [display, setDisplay] = useState(100);
+    useEffect(() => {
+        const interval = setInterval(() => {
+            const val = Math.round(scale.value * 100);
+            if (val !== display) setDisplay(val);
+        }, 100);
+        return () => clearInterval(interval);
+    }, [display]);
+
+    return (
+        <Animated.View style={[S.zoomBadge, animatedStyle]}>
+            <Ionicons name="search-outline" size={12} color="#9ca3af" />
+            <Text style={S.zoomBadgeText}>{display}%</Text>
+        </Animated.View>
+    );
+};
 
 const S = StyleSheet.create({
     container: { flex: 1, overflow: 'hidden', backgroundColor: '#0a0a0f' },
